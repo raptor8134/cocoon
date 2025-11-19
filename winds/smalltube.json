@@ -1,0 +1,33 @@
+{
+comment: "6\" long x 2\" OD cylinder mandrel",
+filament: {
+    preset: "amazon_fiberglass",
+},
+mandrel: 
+    {
+        type: "cylindrical",
+        dimensions: {
+            length: 152.4,
+            diameter: 50.8
+        }
+    },
+layers :
+    [
+        {
+            type: "hoop",
+            stepover: 3, // in mm
+            nrepeat: 2  // so we end up back at the start and don't have to code
+                        // negative beginning helical winds (yet) lol
+        },
+        {
+            type: "helical",
+            angle: 15, // degrees, measured from 'vertical' (line perp. to XZ plane)
+            nrepeat: 1,
+        },
+        {
+            type: "helical",
+            angle: 30, 
+            nrepeat: 1,
+        },
+    ]
+}
