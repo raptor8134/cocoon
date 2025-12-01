@@ -7,6 +7,30 @@ import (
 	"math"
 )
 
+// gcd calculates the greatest common divisor of two integers.
+// This is a helper function for the helical path calculation.
+// Go's standard library has math/big for big integers, but for regular ints we implement it.
+func gcd(a, b int) int {
+	// Euclidean algorithm
+	for b != 0 {
+		a, b = b, a%b
+	}
+	if a < 0 {
+		return -a
+	}
+	return a
+}
+
+// mod360 returns a value equivalent to x % 360.0 in Python, i.e. always in [0, 360).
+// This is important for matching the original helical path logic on arbitrary profiles.
+func mod360(x float64) float64 {
+	r := math.Mod(x, 360.0)
+	if r < 0 {
+		r += 360.0
+	}
+	return r
+}
+
 // GenPointsHoop generates points for a hoop (circumferential) winding pattern.
 // A hoop pattern winds around the mandrel at a constant angle (90 degrees).
 // Parameters:
@@ -61,8 +85,9 @@ func GenPointsHoop(mandrel *Mandrel, stepover float64) ([]Point, []Point) {
 func GenPointsHelical(mandrel *Mandrel, angle float64) ([]Point, []Point) {
 	// Resolution: 3mm steps
 	res := 3.0
-	dx := mandrel.Length / math.Floor(mandrel.Length/res)
-	nsteps := int(math.Floor(mandrel.Length/dx)) + 1
+	nsteps := int(math.Ceil(mandrel.Length / res))
+	dx := mandrel.Length / float64(nsteps)
+	nsteps += 1 // keeps us from having to special case the last point
 
 	// Pre-allocate slices
 	fwpath := make([]Point, 0, nsteps)
@@ -90,11 +115,8 @@ func GenPointsHelical(mandrel *Mandrel, angle float64) ([]Point, []Point) {
 		bwpath = append(bwpath, NewPoint(xbw, y, zbw, abw))
 
 		// Update angles for next iteration
-		// Python: afw += m.degrees(m.atan(m.radians(angle))*dx / zfw)
-		// Go: math.Atan returns radians, math.Atan2 is often better but we match Python here
-		angleRad := angle * math.Pi / 180.0                       // Convert degrees to radians
-		afw += (math.Atan(angleRad) * dx / zfw) * 180.0 / math.Pi // Convert back to degrees
-		abw += (math.Atan(angleRad) * dx / zbw) * 180.0 / math.Pi
+		afw += math.Atan2(dx, zfw) * 180.0 / math.Pi
+		abw += math.Atan2(dx, zbw) * 180.0 / math.Pi
 	}
 
 	return fwpath, bwpath
@@ -118,52 +140,39 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 		layer.FWPath = fwpath
 		layer.BWPath = bwpath
 
-		// Handle single repeat
-		if layer.Repeat == 1 {
-			if layer.RevStart {
-				fullpath = bwpath
+		// reverse start direction if needed
+		if layer.RevStart {
+			fwpath, bwpath = bwpath, fwpath
+		}
+		temp_path := make([]Point, len(fwpath))
+		for i := 0; i < layer.Repeat; i++ {
+			// Alternate between forward and backward
+			if i%2 == 0 {
+				copy(temp_path, fwpath)
 			} else {
-				fullpath = fwpath
+				copy(temp_path, bwpath)
 			}
-		} else {
-			// Multiple repeats: alternate between forward and backward
-			// In Python: sum(paths[::-1 if l.rev_start else 1]*(l.repeat//2), [])
-			// Go doesn't have list multiplication, so we use a loop
-
-			// Determine which path to start with
-			startIdx := 1 // backward
-			if !layer.RevStart {
-				startIdx = 0 // forward
-			}
-
-			// Repeat paths
-			for i := 0; i < layer.Repeat/2; i++ {
-				// Alternate between forward and backward
-				pathIdx := (startIdx + i) % 2
-				// Reverse the path if needed
-				if pathIdx == 1 {
-					// Use backward path (already reversed)
-					fullpath = append(fullpath, bwpath...)
-				} else {
-					fullpath = append(fullpath, fwpath...)
+			// angle translation to match the last point of the fullpath
+			if len(fullpath) > 0 && len(temp_path) > 0 {
+				lastA := fullpath[len(fullpath)-1].A
+				for i := range temp_path {
+					temp_path[i].A += lastA
 				}
+				fmt.Println("fullpath =", temp_path)
 			}
-
-			// Add final path if repeat is odd
-			if layer.Repeat%2 == 1 {
-				if layer.RevStart {
-					fullpath = append(fullpath, bwpath...)
-				} else {
-					fullpath = append(fullpath, fwpath...)
-				}
-			}
+			fullpath = append(fullpath, temp_path...)
 		}
 
 	case "helical":
-		// Generate paths
+		// Generate base forward and backward paths
 		fwpath, bwpath := GenPointsHelical(mandrel, layer.Params.Angle)
 		layer.FWPath = fwpath
 		layer.BWPath = bwpath
+
+		// reverse start direction if needed
+		if layer.RevStart {
+			fwpath, bwpath = bwpath, fwpath
+		}
 
 		angle := layer.Params.Angle
 
@@ -174,8 +183,13 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 			return nil, fmt.Errorf("helical paths are empty")
 		}
 
-		daInnerFW := math.Mod((fwpath[len(fwpath)-1].A - fwpath[0].A), 360.0)
-		daInnerBW := math.Mod((bwpath[len(bwpath)-1].A - bwpath[0].A), 360.0)
+		// Python uses the % operator for modulo, which always returns a value in [0, 360)
+		// even when the left-hand side is negative. Go's math.Mod, by contrast, can
+		// return a negative result. On non‑cylindrical profiles where the net angle
+		// change over a pass can wrap, this difference changes da_inner and thus
+		// the computed inner_repeat/da_end. We normalize explicitly to match Python.
+		daInnerFW := mod360(fwpath[len(fwpath)-1].A - fwpath[0].A)
+		daInnerBW := mod360(bwpath[len(bwpath)-1].A - bwpath[0].A)
 		daInner := (daInnerFW + daInnerBW) / 2.0
 
 		// Calculate inner repeat necessary to cover widest part of mandrel
@@ -186,30 +200,37 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 		innerRepeat = math.Ceil(innerRepeat/2.0) * 2.0 // Round up to nearest even number
 
 		// Minimum da at the ends
+		// TODO calculate this using the mandrel profile and fancy math
 		daEndMin := 180.0 - 2.0*angle
+		fmt.Println("daEndMin =", daEndMin)
 
 		// Find da_end that satisfies conditions
-		// This is the "ugly hacky solution" from Python - we'll keep it the same
+		// Python:
+		//   n = 0
+		//   da_end = -1
+		//   while da_end < da_end_min or gcd(int(da_inner_adjusted*inner_repeat/360),
+		//                                   int(inner_repeat)) > 1:
+		//       da_end = n*360/inner_repeat - da_inner
+		//       da_inner_adjusted = da_inner + da_end
+		//       n += 1
+		//
+		// We replicate this logic exactly so both conditions must be satisfied
+		// (da_end >= da_end_min AND gcd(...) == 1) before we exit.
 		n := 0
 		daEnd := -1.0
 		daInnerAdjusted := 0.0
 
-		for daEnd < daEndMin {
+		for {
 			daEnd = float64(n)*360.0/innerRepeat - daInner
 			daInnerAdjusted = daInner + daEnd
 
-			// Check GCD condition (Python: m.gcd(int(...), int(...))>1)
-			// Go's math/big has GCD, but for ints we can use a simple check
 			val1 := int(daInnerAdjusted * innerRepeat / 360.0)
 			val2 := int(innerRepeat)
 
-			// Simple GCD check (not full GCD, but matches the intent)
-			if gcd(val1, val2) > 1 {
-				n++
-				continue
-			}
-
-			if daEnd >= daEndMin {
+			// Stop only when BOTH:
+			//   - daEnd >= daEndMin
+			//   - gcd(val1, val2) == 1
+			if !(daEnd < daEndMin || gcd(val1, val2) > 1) {
 				break
 			}
 			n++
@@ -223,19 +244,24 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 
 		// Add da_end points to paths
 		// In Python: da_point_fw = deepcopy(l.fwpath[-1])
-		// Go doesn't have deepcopy, but structs are value types, so assignment copies
+		// Go doesn't have deepcopy, but structs are value types, so assignment copies.
+		// IMPORTANT: Python appends to l.fwpath / l.bwpath, and the local "paths"
+		// tuple still sees those updates. To match that behaviour we append to the
+		// local fwpath/bwpath slices and then store them back onto the layer.
 		daPointFW := fwpath[len(fwpath)-1]
 		daPointBW := bwpath[len(bwpath)-1]
 
 		daPointFW.A += daEnd
 		daPointBW.A += daEnd
 
-		layer.FWPath = append(layer.FWPath, daPointFW)
-		layer.BWPath = append(layer.BWPath, daPointBW)
+		fwpath = append(fwpath, daPointFW)
+		bwpath = append(bwpath, daPointBW)
+		layer.FWPath = fwpath
+		layer.BWPath = bwpath
 
 		// Build full path with inner repeats
 		aCurr := 0.0
-		paths := [][]Point{fwpath, bwpath}
+		paths := [][]Point{layer.FWPath, layer.BWPath}
 		startIdx := 1 // backward
 		if !layer.RevStart {
 			startIdx = 0 // forward
@@ -276,18 +302,4 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 
 	layer.FullPath = fullpath
 	return fullpath, nil
-}
-
-// gcd calculates the greatest common divisor of two integers.
-// This is a helper function for the helical path calculation.
-// Go's standard library has math/big for big integers, but for regular ints we implement it.
-func gcd(a, b int) int {
-	// Euclidean algorithm
-	for b != 0 {
-		a, b = b, a%b
-	}
-	if a < 0 {
-		return -a
-	}
-	return a
 }

@@ -155,14 +155,6 @@ func NewMandrelFromCSV(filename string) (*Mandrel, error) {
 // 2. Find the two points that bracket X
 // 3. Linearly interpolate between them
 func (m *Mandrel) Interp(x float64) float64 {
-	// Clamp x to valid range (replaces np.clip)
-	if x < m.XMin {
-		x = m.XMin
-	}
-	if x > m.XMax {
-		x = m.XMax
-	}
-
 	// Find the two points that bracket x
 	// We'll use binary search for efficiency, but linear search is simpler
 	// For small mandrels, linear search is fine
@@ -203,4 +195,3 @@ func (m *Mandrel) Interp(x float64) float64 {
 func (m *Mandrel) MaxZ() float64 {
 	return m.ZMax
 }
-

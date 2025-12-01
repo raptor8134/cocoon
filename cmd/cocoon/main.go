@@ -128,7 +128,7 @@ func runCLI() {
 
 	// Example: Create a filament
 	filament := internal.Filament{
-		Width:     20.0,  // 20mm wide
+		Width:     10.0,  // 10mm wide
 		Thickness: 0.25,  // 0.25mm thick
 		Feedrate:  100.0, // 100 mm/s
 	}
