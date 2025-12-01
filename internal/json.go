@@ -124,7 +124,6 @@ func parseFilament(filamentData interface{}) (Filament, error) {
 		filament.Feedrate = 100.0 // Default
 	}
 
-	fmt.Println(filament.Width)
 	return filament, nil
 }
 

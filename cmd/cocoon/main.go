@@ -29,7 +29,7 @@ func main() {
 		if strings.HasSuffix(strings.ToLower(firstArg), ".json") {
 			runJSONMode(firstArg)
 		} else {
-			runCLI()
+			fmt.Println("Bad filename: `", firstArg, "`\n")
 		}
 	}
 }
@@ -81,12 +81,6 @@ func runJSONMode(jsonFile string) {
 
 	fmt.Printf("\nGenerated %d G-code commands\n", len(gcode))
 
-	// Print first few commands
-	fmt.Println("\nFirst 10 G-code commands:")
-	for i := 0; i < 10 && i < len(gcode); i++ {
-		fmt.Printf("  %s\n", gcode[i])
-	}
-
 	// Write to file in ./gcode/ directory
 	baseName := strings.TrimSuffix(filepath.Base(jsonFile), filepath.Ext(jsonFile))
 
@@ -105,61 +99,6 @@ func runJSONMode(jsonFile string) {
 	if err := os.WriteFile(outputFile, []byte(formattedGcode), 0644); err != nil {
 		log.Printf("Warning: Failed to write G-code file: %v", err)
 	} else {
-		fmt.Printf("\nG-code written to: %s\n", outputFile)
-	}
-}
-
-// runCLI runs the command-line interface.
-// This contains the existing CLI logic.
-func runCLI() {
-	// Example: Create a simple cylindrical mandrel
-	// Mandrel profile: [(0, 10), (100, 10)] - 100mm long, 10mm radius
-	points := [][]float64{
-		{0, 10},   // X=0mm, Z=10mm radius
-		{100, 10}, // X=100mm, Z=10mm radius
-	}
-
-	mandrel, err := internal.NewMandrelFromPoints(points)
-	if err != nil {
-		log.Fatalf("Failed to create mandrel: %v", err)
-	}
-
-	fmt.Printf("Created mandrel: length=%.2fmm, radius=%.2fmm\n", mandrel.Length, mandrel.MaxZ())
-
-	// Example: Create a filament
-	filament := internal.Filament{
-		Width:     10.0,  // 10mm wide
-		Thickness: 0.25,  // 0.25mm thick
-		Feedrate:  100.0, // 100 mm/s
-	}
-
-	// Example: Create a hoop layer
-	layer := internal.Layer{
-		LType:  "hoop",
-		Repeat: 1,
-		Params: internal.LayerParams{
-			Stepover: 5.0, // 5mm stepover
-		},
-		RevStart: false,
-	}
-
-	// Generate the path
-	fullpath, err := internal.Layer2Path(mandrel, filament, &layer)
-	if err != nil {
-		log.Fatalf("Failed to generate path: %v", err)
-	}
-
-	fmt.Printf("Generated %d points\n", len(fullpath))
-
-	// Convert to G-code
-	layers := []internal.Layer{layer}
-	gcode := internal.Layers2Gcode(layers, "")
-
-	fmt.Printf("Generated %d G-code commands\n", len(gcode))
-
-	// Print first few commands
-	fmt.Println("\nFirst 5 G-code commands:")
-	for i := 0; i < 5 && i < len(gcode); i++ {
-		fmt.Printf("  %s\n", gcode[i])
+		fmt.Printf("G-code written to: %s\n", outputFile)
 	}
 }
