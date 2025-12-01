@@ -31,6 +31,40 @@ func mod360(x float64) float64 {
 	return r
 }
 
+// creates a copy of a given point list with the angles shifted by some offset
+func angleOffset(Points []Point, offset float64) []Point {
+	r := make([]Point, len(Points))
+	copy(r, Points)
+	for i := range r {
+		r[i].A += offset
+	}
+	return r
+}
+
+// takes into acount both the given offset, and the offset at the end of a point list
+// useful when adding paths together, preserves desired absolute position
+func offsetConcat(pts1 []Point, pts2 []Point, offsetBetween float64) []Point {
+	r := append(pts1, angleOffset(pts2, pts1[len(pts1)-1].A+offsetBetween)...)
+	return r
+}
+
+// offsetConcat but repeating the operation n times
+// useful for constructing inner repeats on helical, and all outer repeats
+func offsetRepeat(pts []Point, n int, offset float64) []Point {
+	if n <= 0 || len(pts) == 0 {
+		return nil
+	}
+
+	// Start with a single copy of the base path.
+	r := make([]Point, len(pts))
+	copy(r, pts)
+
+	for i := 1; i < n; i++ {
+		r = offsetConcat(r, pts, offset)
+	}
+	return r
+}
+
 // GenPointsHoop generates points for a hoop (circumferential) winding pattern.
 // A hoop pattern winds around the mandrel at a constant angle (90 degrees).
 // Parameters:
@@ -152,16 +186,9 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 			} else {
 				copy(temp_path, bwpath)
 			}
-			// angle translation to match the last point of the fullpath
-			if len(fullpath) > 0 && len(temp_path) > 0 {
-				lastA := fullpath[len(fullpath)-1].A
-				for i := range temp_path {
-					temp_path[i].A += lastA
-				}
-				fmt.Println("fullpath =", temp_path)
-			}
-			fullpath = append(fullpath, temp_path...)
+			temp_path = angleOffset(temp_path, fullpath[len(fullpath)-1].A)
 		}
+		fullpath = append(fullpath, temp_path...)
 
 	case "helical":
 		// Generate base forward and backward paths
@@ -197,12 +224,11 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 		dmax := zmax * 2.0 * math.Pi
 
 		innerRepeat := dmax / (filament.Width * math.Sin(angle*math.Pi/180.0))
-		innerRepeat = math.Ceil(innerRepeat/2.0) * 2.0 // Round up to nearest even number
+		innerRepeat = math.Ceil(innerRepeat/2.0) * 4.0 // Round up to nearest even number
 
 		// Minimum da at the ends
 		// TODO calculate this using the mandrel profile and fancy math
 		daEndMin := 180.0 - 2.0*angle
-		fmt.Println("daEndMin =", daEndMin)
 
 		// Find da_end that satisfies conditions
 		// Python:
@@ -243,58 +269,9 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 		}
 
 		// Add da_end points to paths
-		// In Python: da_point_fw = deepcopy(l.fwpath[-1])
-		// Go doesn't have deepcopy, but structs are value types, so assignment copies.
-		// IMPORTANT: Python appends to l.fwpath / l.bwpath, and the local "paths"
-		// tuple still sees those updates. To match that behaviour we append to the
-		// local fwpath/bwpath slices and then store them back onto the layer.
-		daPointFW := fwpath[len(fwpath)-1]
-		daPointBW := bwpath[len(bwpath)-1]
-
-		daPointFW.A += daEnd
-		daPointBW.A += daEnd
-
-		fwpath = append(fwpath, daPointFW)
-		bwpath = append(bwpath, daPointBW)
-		layer.FWPath = fwpath
-		layer.BWPath = bwpath
-
-		// Build full path with inner repeats
-		aCurr := 0.0
-		paths := [][]Point{layer.FWPath, layer.BWPath}
-		startIdx := 1 // backward
-		if !layer.RevStart {
-			startIdx = 0 // forward
-		}
-
-		for i := 0; i < int(innerRepeat)/2; i++ {
-			pathIdx := (startIdx + i) % 2
-			path := paths[pathIdx]
-
-			// Add points with adjusted angle
-			for _, p := range path {
-				newPoint := p
-				newPoint.A += aCurr
-				fullpath = append(fullpath, newPoint)
-			}
-
-			if len(fullpath) > 0 {
-				aCurr = fullpath[len(fullpath)-1].A
-			}
-		}
-
-		// Add outer repeats
-		fullpathBase := make([]Point, len(fullpath))
-		copy(fullpathBase, fullpath) // Copy the base path
-
-		for n := 0; n < layer.Repeat-1; n++ {
-			baseAngle := fullpathBase[len(fullpathBase)-1].A * float64(n)
-			for _, p := range fullpathBase {
-				newPoint := p
-				newPoint.A += baseAngle
-				fullpath = append(fullpath, newPoint)
-			}
-		}
+		partpath := offsetConcat(fwpath, bwpath, daEnd)
+		innerpath := offsetRepeat(partpath, int(innerRepeat), daEnd)
+		fullpath = offsetRepeat(innerpath, layer.Repeat, 0.0)
 
 	default:
 		return nil, fmt.Errorf("layer type '%s' unrecognized for mandrel type 'arbitrary_axial2'", layer.LType)
