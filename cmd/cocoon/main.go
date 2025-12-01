@@ -35,21 +35,7 @@ func main() {
 }
 
 // launchGUI starts the graphical user interface.
-// This is a placeholder that will be implemented when you add your GUI framework.
-func launchGUI() {
-	fmt.Println("GUI mode - launching graphical interface...")
-	fmt.Println("(GUI implementation coming soon)")
-
-	// TODO: Initialize your GUI framework here
-	// Examples:
-	//   - Fyne: app := app.New(); window := app.NewWindow("Cocoon")
-	//   - Gio: [your Gio setup]
-	//   - Wails: [your Wails setup]
-	//   - etc.
-
-	// For now, just exit
-	os.Exit(0)
-}
+// Implementation is in gui.go
 
 // runJSONMode parses a JSON file and generates G-code from it.
 func runJSONMode(jsonFile string) {

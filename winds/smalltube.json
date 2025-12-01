@@ -19,6 +19,7 @@ layers :
             nrepeat: 2  // so we end up back at the start and don't have to code
                         // negative beginning helical winds (yet) lol
         },
+        /*
         {
             type: "helical",
             angle: 15, // degrees, measured from 'vertical' (line perp. to XZ plane)
@@ -29,5 +30,6 @@ layers :
             angle: 30, 
             nrepeat: 1,
         },
+        */
     ]
 }

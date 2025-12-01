@@ -1,0 +1,27 @@
+{
+comment: "Testing file",
+filament: {
+    preset: "amazon_fiberglass",
+},
+mandrel: 
+    {
+        /*
+        type: "cylindrical",
+        dimensions: {
+            diameter : 50.8, // in mm (2in * 25.4mm/in)
+            length: 152.4,   // in mm (6in * 25.4mm/in)
+        }
+        */
+        type: "arbitrary_axial",
+        profile: "4in_3to1_tanogive.csv",
+        //profile: "zigzag.csv",
+    },
+layers :
+    [
+        {
+            type: "hoop",
+            stepover: 3, // in mm
+            nrepeat: 3
+        },
+    ]
+}
