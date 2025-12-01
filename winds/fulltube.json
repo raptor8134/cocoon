@@ -8,7 +8,7 @@ mandrel:
         type: "cylindrical",
         dimensions: {
             length: 200,
-            diameter: 152.4
+            diameter: 200
         }
     },
 layers :
