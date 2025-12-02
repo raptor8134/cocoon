@@ -44,7 +44,10 @@ func angleOffset(Points []Point, offset float64) []Point {
 // takes into acount both the given offset, and the offset at the end of a point list
 // useful when adding paths together, preserves desired absolute position
 func offsetConcat(pts1 []Point, pts2 []Point, offsetBetween float64) []Point {
-	r := append(pts1, angleOffset(pts2, pts1[len(pts1)-1].A+offsetBetween)...)
+	if len(pts1) >= 1 {
+		offsetBetween += pts1[len(pts1)-1].A
+	}
+	r := append(pts1, angleOffset(pts2, offsetBetween)...)
 	return r
 }
 
@@ -149,8 +152,8 @@ func GenPointsHelical(mandrel *Mandrel, angle float64) ([]Point, []Point) {
 		bwpath = append(bwpath, NewPoint(xbw, y, zbw, abw))
 
 		// Update angles for next iteration
-		afw += math.Atan2(dx, zfw) * 180.0 / math.Pi
-		abw += math.Atan2(dx, zbw) * 180.0 / math.Pi
+		afw += 180 / math.Pi * (math.Atan2(math.Pi/180*angle*dx, zfw)) // z is the radius here
+		abw += 180 / math.Pi * (math.Atan2(math.Pi/180*angle*dx, zbw))
 	}
 
 	return fwpath, bwpath
@@ -179,14 +182,13 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 			fwpath, bwpath = bwpath, fwpath
 		}
 		temp_path := make([]Point, len(fwpath))
-		for i := 0; i < layer.Repeat; i++ {
+		for i := range layer.Repeat {
 			// Alternate between forward and backward
 			if i%2 == 0 {
 				copy(temp_path, fwpath)
 			} else {
 				copy(temp_path, bwpath)
 			}
-			temp_path = angleOffset(temp_path, fullpath[len(fullpath)-1].A)
 		}
 		fullpath = append(fullpath, temp_path...)
 

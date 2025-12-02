@@ -1,46 +1,26 @@
 {
-comment: "Testing file",
+comment: "Test nosecone",
 filament: {
-    preset: "amazon_fiberglass",
+   preset:  "amazon_fiberglass",
+   width: 30,
 },
 mandrel: 
     {
-        /*
-        type: "cylindrical",
-        dimensions: {
-            diameter : 50.8, // in mm (2in * 25.4mm/in)
-            length: 152.4,   // in mm (6in * 25.4mm/in)
-        }
-        */
         type: "arbitrary_axial",
-        profile: "4in_3to1_tanogive.csv",
-        //profile: "zigzag.csv",
+        profile: "4in_3to1_tanogive.csv"
     },
 layers :
     [
-        /*
         {
             type: "hoop",
-            stepover: 3, // in mm
-            nrepeat: 3
+            stepover: 5, // in mm
+            nrepeat: 1  // so we end up back at the start and don't have to code
+                        // negative beginning helical winds (yet) lol
         },
-        */
         {
             type: "helical",
-            angle: 55, // degrees, measured from 'vertical' (line perp. to XZ plane)
+            angle: 25, // degrees, measured from axis
             nrepeat: 1,
         },
-        /*
-        {
-            type: "helical",
-            angle: 45,
-            nrepeat: 1, 
-            const_thickness: "False" // implement this later, but make it an option to 
-                                        // have constant thickness instead of constant
-                                        // winding angle, have angle be what it starts
-                                        // at for the initial z value but change based 
-                                        // on current z or something
-        },
-        */
     ]
 }
