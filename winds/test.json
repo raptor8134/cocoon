@@ -2,7 +2,7 @@
 comment: "Test nosecone",
 filament: {
    preset:  "amazon_fiberglass",
-   width: 30,
+   width: 40,
 },
 mandrel: 
     {
@@ -13,13 +13,13 @@ layers :
     [
         {
             type: "hoop",
-            stepover: 5, // in mm
-            nrepeat: 1  // so we end up back at the start and don't have to code
+            stepover: 2, // in mm
+            nrepeat: 0  // so we end up back at the start and don't have to code
                         // negative beginning helical winds (yet) lol
         },
         {
             type: "helical",
-            angle: 25, // degrees, measured from axis
+            angle: 45, // degrees, measured from axis
             nrepeat: 1,
         },
     ]

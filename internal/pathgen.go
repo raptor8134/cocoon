@@ -120,8 +120,8 @@ func GenPointsHoop(mandrel *Mandrel, stepover float64) ([]Point, []Point) {
 //
 // Returns forward and backward paths.
 func GenPointsHelical(mandrel *Mandrel, angle float64) ([]Point, []Point) {
-	// Resolution: 3mm steps
-	res := 3.0
+	// Resolution: 5mm steps
+	res := 5.0
 	nsteps := int(math.Ceil(mandrel.Length / res))
 	dx := mandrel.Length / float64(nsteps)
 	nsteps += 1 // keeps us from having to special case the last point

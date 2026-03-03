@@ -219,3 +219,7 @@ func parseArbitraryAxialMandrel(mandrelMap map[string]interface{}) (*Mandrel, er
 		return nil, fmt.Errorf("profile must be a string (CSV filename) or array of points")
 	}
 }
+
+// Note: GUI integrations previously lived here (e.g. ParseAndCreateRenderer),
+// but the current codebase no longer constructs a Gio-based renderer from this
+// package. New GUIs should import ParseWindFromJSON and Layer2Path directly.
