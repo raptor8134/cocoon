@@ -82,10 +82,16 @@ func GenPointsHoop(mandrel *Mandrel, stepover float64) ([]Point, []Point) {
 	// math.Floor and int conversion work together for this
 	nsteps := int(math.Floor(mandrel.Length / stepover))
 
-	// Pre-allocate slices with known capacity for efficiency
-	// make([]Type, length, capacity) - capacity is optional but helps performance
-	fwpath := make([]Point, 0, nsteps)
-	bwpath := make([]Point, 0, nsteps)
+	// Number of angular segments per hoop revolution.
+	// More segments gives smoother rendering and motion.
+	segs := 72
+	if segs < 8 {
+		segs = 8
+	}
+
+	ptsPerStep := segs + 1 // include last point at 360 to close the hoop
+	fwpath := make([]Point, 0, nsteps*ptsPerStep)
+	bwpath := make([]Point, 0, nsteps*ptsPerStep)
 
 	// Generate points
 	// Go's for loop is more explicit than Python's range()
@@ -99,14 +105,13 @@ func GenPointsHoop(mandrel *Mandrel, stepover float64) ([]Point, []Point) {
 		zfw := mandrel.Interp(xfw)
 		zbw := mandrel.Interp(xbw)
 
-		// Calculate angle (360 degrees per step)
-		a := float64(n) * 360.0
-
-		// Create points and append to slices
-		// append() is like Python's list.append(), but it returns a new slice
-		// (Go slices can grow, but the underlying array might be reallocated)
-		fwpath = append(fwpath, NewPoint(xfw, 0, zfw, a))
-		bwpath = append(bwpath, NewPoint(xbw, 0, zbw, a))
+		// Create a full hoop (circle) at each x position.
+		abase := float64(n) * 360.0
+		for k := 0; k <= segs; k++ {
+			a := abase + float64(k)*360.0/float64(segs)
+			fwpath = append(fwpath, NewPoint(xfw, 0, zfw, a))
+			bwpath = append(bwpath, NewPoint(xbw, 0, zbw, a))
+		}
 	}
 
 	return fwpath, bwpath
@@ -181,16 +186,21 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 		if layer.RevStart {
 			fwpath, bwpath = bwpath, fwpath
 		}
-		temp_path := make([]Point, len(fwpath))
-		for i := range layer.Repeat {
-			// Alternate between forward and backward
+
+		// Treat non-positive repeat as a single pass (useful for preview configs).
+		repeat := layer.Repeat
+		if repeat <= 0 {
+			repeat = 1
+		}
+
+		// Alternate between forward and backward paths on each repeat.
+		for i := 0; i < repeat; i++ {
 			if i%2 == 0 {
-				copy(temp_path, fwpath)
+				fullpath = append(fullpath, fwpath...)
 			} else {
-				copy(temp_path, bwpath)
+				fullpath = append(fullpath, bwpath...)
 			}
 		}
-		fullpath = append(fullpath, temp_path...)
 
 	case "helical":
 		// Generate base forward and backward paths
