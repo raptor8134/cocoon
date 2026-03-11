@@ -29,7 +29,7 @@ func main() {
 		if strings.HasSuffix(strings.ToLower(firstArg), ".json") {
 			runJSONMode(firstArg)
 		} else {
-			fmt.Println("Bad filename: `", firstArg, "`\n")
+			fmt.Println("Bad filename: `", firstArg, "`")
 		}
 	}
 }

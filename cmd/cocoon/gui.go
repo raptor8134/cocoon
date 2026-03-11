@@ -1,134 +1,313 @@
 package main
 
 import (
-	"github.com/goki/gi/gi"
-	"github.com/goki/gi/gimain"
-	"github.com/goki/gi/giv"
-	"github.com/goki/gi/oswin"
-	"github.com/goki/gi/oswin/driver/vkos"
-	"github.com/goki/gi/oswin/mouse"
-	"github.com/goki/gi/units"
-	"github.com/goki/ki/ki"
+	"cocoon/internal"
+	"os"
+	"path/filepath"
+
+	"cogentcore.org/core/base/fileinfo"
+	"cogentcore.org/core/colors"
+	"cogentcore.org/core/core"
+	"cogentcore.org/core/events"
+	"cogentcore.org/core/icons"
+	"cogentcore.org/core/math32"
+	"cogentcore.org/core/styles"
+	"cogentcore.org/core/styles/units"
+	"cogentcore.org/core/text/lines"
+	"cogentcore.org/core/text/textcore"
+	"cogentcore.org/core/xyz"
+	"cogentcore.org/core/xyz/xyzcore"
 )
 
-// AppState holds minimal GUI state for the Gi-based placeholder.
+// AppState holds minimal GUI state for the placeholder GUI.
 type AppState struct {
-	Buf *giv.TextBuf
+	Lines *lines.Lines
+
+	wind *internal.Wind
+	err  error
+
+	sc *xyz.Scene
+
+	mandrelCenter math32.Vector3
+	mandrelRadius float32
 }
 
-// launchGUI starts the graphical user interface using Gi.
+// launchGUI starts the graphical user interface using Cogent Core.
 func launchGUI() {
-	// Ensure the Vulkan/GLFW driver is registered.
-	vkos.VkOsDebug = false
-
-	gimain.Main(func() {
-		mainrunGUI()
-	})
+	mainrunGUI().RunMainWindow()
 }
 
 // mainrunGUI creates a simple two-pane window: editor on the left, placeholder on the right.
-func mainrunGUI() {
-	const width = 1200
-	const height = 800
+func mainrunGUI() *core.Body {
+	b := core.NewBody("Cocoon - G-code Generator")
 
-	gi.SetAppName("cocoon")
-	gi.SetAppAbout(`Cocoon - CNC Operated COmposite Overwrap Navigator`)
-
-	win := gi.NewMainWindow("cocoon", "Cocoon - G-code Generator", width, height)
-
-	vp := win.WinViewport2D()
-	updt := vp.UpdateStart()
-
-	mfr := win.SetMainFrame()
-	mfr.SetProp("spacing", units.NewEx(1))
-	mfr.SetStretchMax()
-
-	// Top title label.
-	title := gi.AddNewLabel(mfr, "title", "Cocoon - G-code Generator (Gi placeholder GUI)")
-	title.SetProp("font-size", "x-large")
-	title.SetProp("margin", units.NewEx(0.5))
-
-	// Horizontal split: left editor, draggable divider, right placeholder viewer.
-	row := gi.AddNewLayout(mfr, "main-row", gi.LayoutHoriz)
-	row.SetStretchMax()
-
-	// Editor and viewer panels with a narrow divider in between.
-	edFrame := gi.AddNewFrame(row, "editor-frame", gi.LayoutVert)
-	edFrame.SetStretchMaxHeight()
-
-	divFrame := gi.AddNewFrame(row, "divider-frame", gi.LayoutVert)
-	divFrame.SetMinPrefWidth(units.NewPx(4))
-	divFrame.SetProp("background-color", "gray")
-
-	viewFrame := gi.AddNewFrame(row, "view-frame", gi.LayoutVert)
-	viewFrame.SetStretchMax()
-
-	state := &AppState{}
-
-	// Initial editor width: 40% of total; enforced via MinPrefWidth during drag.
-	// Actual px width is computed from mouse position at drag time.
-	var dragging bool
-
-	divFrame.ConnectEvent(oswin.MouseEvent, gi.LowPri, func(recv, send ki.Ki, sig int64, d any) {
-		me := d.(*mouse.Event)
-		switch me.Action {
-		case mouse.Press:
-			dragging = true
-		case mouse.Release:
-			dragging = false
-		case mouse.Drag:
-			if !dragging {
-				return
-			}
-			// Compute desired left width from mouse X relative to the row layout.
-		rowLay := row
-		total := float32(rowLay.ObjBBox.Size().X)
-			if total <= 0 {
-				return
-			}
-			leftPx := float32(me.Where.X - rowLay.ObjBBox.Min.X)
-
-			// Constrain divider so panes stay within [20%, 80%] of total width.
-			minPx := 0.2 * total
-			maxPx := 0.8 * total
-			if leftPx < minPx {
-				leftPx = minPx
-			}
-			if leftPx > maxPx {
-				leftPx = maxPx
-			}
-
-			edFrame.SetMinPrefWidth(units.NewPx(leftPx))
-		}
+	main := core.NewFrame(b)
+	main.Styler(func(s *styles.Style) {
+		s.Direction = styles.Column
+		s.Grow.X = 1
+		s.Grow.Y = 1
 	})
 
-	setupEditor(edFrame, state)
-	setupViewer(viewFrame)
+	core.NewText(main).SetText("Cocoon - G-code Generator (Cogent Core placeholder GUI)").SetType(core.TextHeadlineMedium)
 
-	vp.UpdateEndNoSig(updt)
-	win.StartEventLoop()
+	sp := core.NewSplits(main)
+	sp.Styler(func(s *styles.Style) {
+		s.Direction = styles.Row
+		s.Grow.X = 1
+		s.Grow.Y = 1
+	})
+	sp.SetSplits(0.4, 0.6)
+
+	edFrame := core.NewFrame(sp)
+	edFrame.Styler(func(s *styles.Style) {
+		s.Direction = styles.Column
+		s.Grow.X = 1
+		s.Grow.Y = 1
+	})
+	viewFrame := core.NewFrame(sp)
+	viewFrame.Styler(func(s *styles.Style) {
+		s.Direction = styles.Column
+		s.Grow.X = 1
+		s.Grow.Y = 1
+	})
+
+	state := &AppState{}
+	ed := setupEditor(edFrame, state)
+	setupViewer(viewFrame, state, ed)
+
+	return b
 }
 
 // setupEditor creates a simple text editor for JSON configuration on the left pane.
-func setupEditor(parent ki.Ki, state *AppState) {
-	gi.AddNewLabel(parent, "editor-label", "Editor (JSON configuration)")
+func setupEditor(parent *core.Frame, state *AppState) *textcore.Editor {
+	core.NewText(parent).SetText("Editor (JSON configuration)").SetType(core.TextTitleMedium)
 
-	// TextView with its own layout (scrollbars etc).
-	tv, tvLay := giv.AddNewTextViewLayout(parent, "editor")
-	tvLay.SetStretchMax()
+	ed := textcore.NewEditor(parent)
+	ed.Styler(func(s *styles.Style) {
+		s.Grow.X = 1
+		s.Grow.Y = 1
+	})
+	ed.Lines.SetLanguage(fileinfo.Json)
 
-	buf := giv.NewTextBuf()
-	// Hint syntax highlighting to use JSON rules.
-	buf.Filename = "editor.json"
-	buf.SetText([]byte("// JSON/JSON5 configuration goes here\n"))
-	tv.SetBuf(buf)
+	// Default-load test.json into the editor.
+	// Prefer local `winds/test.json`, but fall back to a minimal stub on error.
+	defaultPath := filepath.Join("winds", "test.json")
+	if b, err := os.ReadFile(defaultPath); err == nil {
+		ed.Lines.SetString(string(b))
+	} else {
+		ed.Lines.SetString("{\n  // failed to load winds/test.json\n}\n")
+	}
 
-	state.Buf = buf
+	state.Lines = ed.Lines
+	return ed
 }
 
-// setupViewer creates a placeholder right-hand pane.
-func setupViewer(parent ki.Ki) {
-	gi.AddNewLabel(parent, "viewer-label",
-		"Path View placeholder\n\nA Gi/gi3d 3D visualization will be added here.")
+// setupViewer creates the right-hand pane with a live path renderer.
+func setupViewer(parent *core.Frame, state *AppState, ed *textcore.Editor) {
+	// Error text stays under the render area.
+	errText := core.NewText(parent)
+	errText.Styler(func(s *styles.Style) {
+		s.Color = colors.Scheme.Error.Base
+	})
+
+	// 3D scene viewer with built-in mouse navigation:
+	// - Drag: orbit (Shift: pan)
+	// - Scroll: zoom
+	// Reduce sensitivity a bit from defaults.
+	xyz.OrbitFactor = 0.01
+	xyz.PanFactor = 0.0004
+
+	// Container for render + overlays, stacked so overlays appear on top.
+	renderFrame := core.NewFrame(parent)
+	renderFrame.Styler(func(s *styles.Style) {
+		s.Grow.Set(1, 1)
+		s.Display = styles.Stacked
+	})
+
+	state.sc = xyz.NewScene()
+	// Darker background so mandrel and paths stand out.
+	state.sc.Background = colors.Scheme.SurfaceDim
+	xyz.NewAmbient(state.sc, "ambient", 0.35, xyz.DirectSun)
+	dir := xyz.NewDirectional(state.sc, "sun", 0.9, xyz.DirectSun)
+	dir.Pos.Set(0, 2, 1)
+
+	sw := xyzcore.NewSceneForScene(state.sc, renderFrame)
+	sw.Styler(func(s *styles.Style) {
+		s.Grow.Set(1, 1)
+	})
+
+	// Overlay Home button in the top-left of the render.
+	header := core.NewFrame(renderFrame)
+	header.Styler(func(s *styles.Style) {
+		s.Direction = styles.Row
+		s.Align.Items = styles.Center
+		// Anchored top-left with a bit of margin.
+		s.Margin.Set(units.Dp(8))
+	})
+	homeBtn := core.NewButton(header).SetIcon(icons.Home).SetTooltip("Reset camera (home)")
+	homeBtn.OnClick(func(e events.Event) {
+		if state.sc == nil {
+			return
+		}
+		_ = state.sc.SetCamera("home")
+		updateCameraClip(state)
+		sw.NeedsRender()
+	})
+
+	// Ensure arrow-key navigation etc also respects zoom clamp and clip planes.
+	sw.OnFirst(events.KeyChord, func(e events.Event) {
+		e.SetHandled()
+		if state.sc == nil || state.sc.NoNav {
+			return
+		}
+		state.sc.KeyChordEvent(e)
+		updateCameraClip(state)
+		sw.NeedsRender()
+	})
+
+	// Mouse-drag navigation:
+	// - Left-drag: orbit / rotate
+	// - Right-drag: orbit / rotate (same as left)
+	// (Arrows still work via xyz's KeyChord handler.)
+	sw.OnFirst(events.SlideMove, func(e events.Event) {
+		e.SetHandled()
+		if state.sc == nil || state.sc.NoNav {
+			return
+		}
+		pos := sw.Geom.ContentBBox.Min
+		e.SetLocalOff(e.LocalOff().Add(pos))
+
+		del := e.PrevDelta()
+		dx := float32(del.X)
+		dy := float32(del.Y)
+
+		cam := &state.sc.Camera
+		cdist := math32.Max(cam.DistanceTo(cam.Target), 1.0)
+		orbDel := xyz.OrbitFactor * cdist
+
+		if e.MouseButton() == events.Left || e.MouseButton() == events.Right {
+			state.sc.Camera.Orbit(-dx*orbDel, -dy*orbDel)
+			updateCameraClip(state)
+			sw.NeedsRender()
+		}
+	})
+
+	// Reduce scroll zoom sensitivity by scaling wheel delta before xyz handles it.
+	// We mark the event handled so the default handler doesn't also run.
+	sw.OnFirst(events.Scroll, func(e events.Event) {
+		e.SetHandled()
+		if state.sc == nil || state.sc.NoNav {
+			return
+		}
+		me, ok := e.(*events.MouseScroll)
+		if !ok {
+			return
+		}
+		me.Delta.Y *= 0.35
+		// Dolly zoom: change camera distance only (keep Target fixed).
+		// This avoids "moving around" behavior of zoom-to-cursor.
+		cdist := math32.Max(state.sc.Camera.DistanceTo(state.sc.Camera.Target), 1.0)
+		zoomDel := float32(.02) * cdist
+		zoom := float32(me.Delta.Y)
+		zoomPct := (zoom * zoomDel) / cdist
+		state.sc.Camera.Zoom(zoomPct)
+
+		// Clamp zoom to 10% - 1000% of "home" camera distance.
+		updateCameraClip(state)
+		sw.NeedsRender()
+	})
+
+	recompute := func() {
+		txt := state.Lines.String()
+		w, err := internal.ParseWindFromJSONText(txt)
+		if err == nil {
+			for i := range w.Layers {
+				_, err = internal.Layer2Path(w.Mandrel, w.Filament, &w.Layers[i])
+				if err != nil {
+					break
+				}
+			}
+		}
+		state.wind = w
+		state.err = err
+		if err != nil {
+			errText.SetText(err.Error())
+		} else {
+			errText.SetText("")
+		}
+
+		if err == nil && w != nil {
+			buildXYZScene(state, w)
+		} else if state.sc != nil {
+			state.sc.DeleteChildren()
+			state.sc.Update()
+		}
+		sw.NeedsRender()
+	}
+
+	// Render on every keystroke.
+	ed.On(events.Input, func(e events.Event) {
+		recompute()
+	})
+
+	// Initial render.
+	recompute()
 }
 
+// updateCameraClip tightens the camera near/far planes around the mandrel bounding sphere
+// to improve depth precision. The sphere is centered on the mandrel axis midpoint with
+// radius stored in AppState (half-length + 20mm).
+func updateCameraClip(state *AppState) {
+	if state == nil || state.sc == nil {
+		return
+	}
+	sc := state.sc
+	r := state.mandrelRadius
+	if r <= 0 {
+		return
+	}
+	cam := &sc.Camera
+
+	// Enforce zoom clamp for *all* camera changes, not just scroll.
+	if sc.SavedCams != nil {
+		if home, ok := sc.SavedCams["home"]; ok {
+			homeDist := home.Pose.Pos.Sub(home.Target).Length()
+			if homeDist > 0 {
+				minDist := 0.1 * homeDist
+				maxDist := 10.0 * homeDist
+				curVec := cam.Pose.Pos.Sub(cam.Target)
+				curDist := curVec.Length()
+				if curDist > 0 {
+					switch {
+					case curDist < minDist:
+						cam.Pose.Pos = cam.Target.Add(curVec.Normal().MulScalar(minDist))
+						cam.LookAtTarget()
+					case curDist > maxDist:
+						cam.Pose.Pos = cam.Target.Add(curVec.Normal().MulScalar(maxDist))
+						cam.LookAtTarget()
+					}
+				}
+			}
+		}
+	}
+
+	// Distance from camera to mandrel center.
+	dv := cam.Pose.Pos.Sub(state.mandrelCenter)
+	d := dv.Length()
+	if d <= 0 {
+		return
+	}
+
+	// Use the same rule inside/outside the sphere to avoid sudden clipping changes.
+	near := d - r*2
+	far := d + r*1.1
+	if near < 0.01 {
+		near = 0.01
+	}
+	if far <= near+0.01 {
+		far = near + 0.01
+	}
+	cam.Near = near
+	cam.Far = far
+	cam.UpdateMatrix()
+}

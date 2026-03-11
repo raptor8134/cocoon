@@ -27,6 +27,17 @@ func ParseWindFromJSON(filename string) (*Wind, error) {
 		return nil, fmt.Errorf("failed to read JSON file: %w", err)
 	}
 
+	return ParseWindFromJSONBytes(data)
+}
+
+// ParseWindFromJSONText parses JSON/JSON5 text and creates a Wind object.
+// This is primarily for GUI/editor integrations.
+func ParseWindFromJSONText(text string) (*Wind, error) {
+	return ParseWindFromJSONBytes([]byte(text))
+}
+
+// ParseWindFromJSONBytes parses JSON/JSON5 bytes and creates a Wind object.
+func ParseWindFromJSONBytes(data []byte) (*Wind, error) {
 	// Parse JSON into map structure
 	var windJSON map[string]interface{}
 	if err := json.Unmarshal(data, &windJSON); err != nil {

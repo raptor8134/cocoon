@@ -1,3 +1,6 @@
 #!/bin/sh
 go build ./cmd/cocoon # linux
-GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=winegcc go build ./cmd/cocoon/ # windows
+GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
+  CC=x86_64-w64-mingw32-gcc \
+  CXX=x86_64-w64-mingw32-g++ \
+  go build ./cmd/cocoon/ # windows
