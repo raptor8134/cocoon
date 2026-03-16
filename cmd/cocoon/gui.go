@@ -2,8 +2,11 @@ package main
 
 import (
 	"cocoon/internal"
-	"os"
-	"path/filepath"
+	"cocoon/internal/storage"
+	_ "embed"
+	"fmt"
+	"strings"
+	"time"
 
 	"cogentcore.org/core/base/fileinfo"
 	"cogentcore.org/core/colors"
@@ -30,17 +33,47 @@ type AppState struct {
 
 	mandrelCenter math32.Vector3
 	mandrelRadius float32
+
+	// lastRenderStats holds coarse-grained metrics from the most recent
+	// 3D scene rebuild. It is populated whenever BuildXYZScene runs.
+	lastRenderStats internal.RenderStats
+
+	// EditorErrText shows parser/path errors at the bottom of the editor pane.
+	EditorErrText *core.Text
+
+	// OnWindUpdated is set by setupViewerContent when the 3D viewer is ready.
+	// When non-nil, calling it rebuilds the 3D scene from the latest parsed wind.
+	OnWindUpdated func()
+
+	// debounceTimer schedules a single recompute 100ms after the last editor input.
+	debounceTimer *time.Timer
+
+	// CurrentName is the logical JSON filename associated with the
+	// current editor contents (e.g. "test.json"). It is used by the
+	// File menu Save/Save As actions.
+	CurrentName string
+
+	// Dirty is true when the editor contents differ from the last
+	// successful load or save operation.
+	Dirty bool
 }
+
+//go:embed winds/test.json
+var defaultWindJSON string
 
 // launchGUI starts the graphical user interface using Cogent Core.
 func launchGUI() {
+	// TODO(wasm): re-enable Cogent Core prefs/settings once AppDataDir and
+	// filesystem-backed settings are reliably supported in the web build.
+	// For now we disable prefs to avoid WASM crashes from OpenSettings/WriteFile.
+	//core. = true
+
 	mainrunGUI().RunMainWindow()
 }
 
 // mainrunGUI creates a simple two-pane window: editor on the left, placeholder on the right.
 func mainrunGUI() *core.Body {
-	b := core.NewBody("Cocoon - G-code Generator")
-
+	b := core.NewBody("Cocoon")
 	main := core.NewFrame(b)
 	main.Styler(func(s *styles.Style) {
 		s.Direction = styles.Column
@@ -48,7 +81,57 @@ func mainrunGUI() *core.Body {
 		s.Grow.Y = 1
 	})
 
-	core.NewText(main).SetText("Cocoon - G-code Generator (Cogent Core placeholder GUI)").SetType(core.TextHeadlineMedium)
+	state := &AppState{}
+
+	// True top bar: File / Edit dropdown menus at the top of the window.
+	menuBar := core.NewFrame(main)
+	menuBar.Styler(func(s *styles.Style) {
+		s.Direction = styles.Row
+		s.Gap.Set(units.Dp(12))
+		s.Padding.Set(units.Dp(4))
+	})
+
+	fileBtn := core.NewButton(menuBar).SetText("File")
+	fileBtn.Type = core.ButtonText
+	fileBtn.SetMenu(func(m *core.Scene) {
+		core.NewButton(m).SetText("Open…").OnClick(func(e events.Event) {
+			if state.CurrentName == "" {
+				state.CurrentName = "test.json"
+			}
+			// Reuse existing helper; on desktop/web it routes through storage.
+			// We need an editor to load into, so defer wiring to the concrete
+			// editor instance below via a closure; see note in setup below.
+		})
+		core.NewButton(m).SetText("Save").OnClick(func(e events.Event) {
+			if err := saveCurrent(state); err != nil {
+				fmt.Println("Save error:", err)
+			}
+		})
+		core.NewButton(m).SetText("Save As…").OnClick(func(e events.Event) {
+			name := state.CurrentName
+			if name == "" {
+				name = "untitled.json"
+			}
+			name = "copy_of_" + name
+			if err := saveAs(state, name); err != nil {
+				fmt.Println("Save As error:", err)
+			}
+		})
+		core.NewSeparator(m)
+		core.NewButton(m).SetText("Download…").OnClick(func(e events.Event) {
+			if err := downloadCurrent(state); err != nil {
+				fmt.Println("Download error:", err)
+			}
+		})
+	})
+
+	editBtn := core.NewButton(menuBar).SetText("Edit")
+	editBtn.Type = core.ButtonText
+	editBtn.SetMenu(func(m *core.Scene) {
+		core.NewButton(m).SetText("Preferences…").OnClick(func(e events.Event) {
+			fmt.Println("Preferences dialog not yet implemented.")
+		})
+	})
 
 	sp := core.NewSplits(main)
 	sp.Styler(func(s *styles.Style) {
@@ -71,14 +154,47 @@ func mainrunGUI() *core.Body {
 		s.Grow.Y = 1
 	})
 
-	state := &AppState{}
 	ed := setupEditor(edFrame, state)
 	setupViewer(viewFrame, state, ed)
+
+	// Now that we have a concrete editor, wire the File→Open… menu to use it.
+	fileBtn.SetMenu(func(m *core.Scene) {
+		core.NewButton(m).SetText("Open…").OnClick(func(e events.Event) {
+			if state.CurrentName == "" {
+				state.CurrentName = "test.json"
+			}
+			if err := loadFrom(state, ed, state.CurrentName); err != nil {
+				fmt.Println("Open error:", err)
+			}
+		})
+		core.NewButton(m).SetText("Save").OnClick(func(e events.Event) {
+			if err := saveCurrent(state); err != nil {
+				fmt.Println("Save error:", err)
+			}
+		})
+		core.NewButton(m).SetText("Save As…").OnClick(func(e events.Event) {
+			name := state.CurrentName
+			if name == "" {
+				name = "untitled.json"
+			}
+			name = "copy_of_" + name
+			if err := saveAs(state, name); err != nil {
+				fmt.Println("Save As error:", err)
+			}
+		})
+		core.NewSeparator(m)
+		core.NewButton(m).SetText("Download…").OnClick(func(e events.Event) {
+			if err := downloadCurrent(state); err != nil {
+				fmt.Println("Download error:", err)
+			}
+		})
+	})
 
 	return b
 }
 
-// setupEditor creates a simple text editor for JSON configuration on the left pane.
+// setupEditor creates a simple text editor for JSON configuration on the left pane,
+// with an error line at the bottom for parser/path generator messages.
 func setupEditor(parent *core.Frame, state *AppState) *textcore.Editor {
 	core.NewText(parent).SetText("Editor (JSON configuration)").SetType(core.TextTitleMedium)
 
@@ -89,43 +205,229 @@ func setupEditor(parent *core.Frame, state *AppState) *textcore.Editor {
 	})
 	ed.Lines.SetLanguage(fileinfo.Json)
 
-	// Default-load test.json into the editor.
-	// Prefer local `winds/test.json`, but fall back to a minimal stub on error.
-	defaultPath := filepath.Join("winds", "test.json")
-	if b, err := os.ReadFile(defaultPath); err == nil {
+	// Initial load: try winds/test.json via storage, then embedded JSON.
+	if b, err := storage.Default().Load("test.json"); err == nil {
+		println("setupEditor: loaded default wind JSON from storage as test.json")
 		ed.Lines.SetString(string(b))
+		state.CurrentName = "test.json"
+		state.Dirty = false
+	} else if defaultWindJSON != "" {
+		println("setupEditor: FAILED to load test.json from storage, using embedded default JSON:", err.Error())
+		ed.Lines.SetString(defaultWindJSON)
+		state.CurrentName = "embedded.json"
+		state.Dirty = false
 	} else {
+		println("setupEditor: no storage or embedded default JSON available")
 		ed.Lines.SetString("{\n  // failed to load winds/test.json\n}\n")
+		state.CurrentName = "untitled.json"
+		state.Dirty = true
 	}
 
 	state.Lines = ed.Lines
+
+	// Error area at bottom of editor: always visible, never covered. Reserve space so editor can't shrink it away.
+	errorFrame := core.NewFrame(parent)
+	errorFrame.Styler(func(s *styles.Style) {
+		s.Grow.X = 1
+		s.Grow.Y = 0
+		s.Min.Y = units.Em(2.5)
+		s.Padding.Set(units.Dp(6))
+		s.Background = colors.Scheme.SurfaceContainerHighest
+	})
+	editorErr := core.NewText(errorFrame)
+	editorErr.Styler(func(s *styles.Style) {
+		s.Color = colors.Scheme.Error.Base
+		s.Grow.X = 1
+	})
+	editorErr.SetType(core.TextBodySmall)
+	editorErr.SetText("no errors (init)")
+	state.EditorErrText = editorErr
+
+	// Debounced validation: at most once per 100ms after typing. On web we use
+	// setTimeout so the callback runs on the browser main thread (avoids panic
+	// in Cogent text styling).
+	ed.On(events.Input, func(e events.Event) {
+		scheduleDebouncedRecompute(state, func() {
+			txt := state.Lines.String()
+			w, msg := ValidateContent(txt)
+			state.wind = w
+			if w == nil {
+				state.err = fmt.Errorf("%s", msg)
+			} else {
+				state.err = nil
+			}
+			if state.EditorErrText != nil {
+				state.EditorErrText.SetText(msg)
+				state.EditorErrText.Update()
+			}
+			// Any successful input path marks the document as dirty.
+			state.Dirty = true
+			if state.OnWindUpdated != nil {
+				state.OnWindUpdated()
+			}
+		})
+	})
+
+	// Initial validation so load errors show immediately and viewer can render.
+	txt := ed.Lines.String()
+	w, msg := ValidateContent(txt)
+	state.wind = w
+	if w == nil {
+		println("setupEditor: initial ValidateContent returned nil wind, msg:", msg)
+	} else {
+		println("setupEditor: initial ValidateContent returned non-nil wind, msg:", msg)
+	}
+	if w == nil {
+		state.err = fmt.Errorf("%s", msg)
+	} else {
+		state.err = nil
+	}
+	if state.EditorErrText != nil {
+		state.EditorErrText.SetText(msg)
+		state.EditorErrText.NeedsRender()
+	}
+	if state.OnWindUpdated != nil {
+		state.OnWindUpdated()
+	}
+
 	return ed
 }
 
-// setupViewer creates the right-hand pane with a live path renderer.
+// saveCurrent saves the current editor contents using the logical name in state.
+// If no name is set, it returns an error; menu handlers can fall back to Save As.
+func saveCurrent(state *AppState) error {
+	if state == nil || state.Lines == nil {
+		return fmt.Errorf("no document to save")
+	}
+	if state.CurrentName == "" {
+		return fmt.Errorf("no current filename")
+	}
+	data := []byte(state.Lines.String())
+	if err := storage.Default().Save(state.CurrentName, data); err != nil {
+		return err
+	}
+	state.Dirty = false
+	return nil
+}
+
+// saveAs saves the current buffer under a new logical name and updates state.
+func saveAs(state *AppState, name string) error {
+	if name == "" {
+		return fmt.Errorf("empty filename")
+	}
+	state.CurrentName = name
+	return saveCurrent(state)
+}
+
+// loadFrom loads the named JSON into the editor, re-runs validation, and
+// triggers a viewer update.
+func loadFrom(state *AppState, ed *textcore.Editor, name string) error {
+	if state == nil || ed == nil {
+		return fmt.Errorf("no editor to load into")
+	}
+	data, err := storage.Default().Load(name)
+	if err != nil {
+		return err
+	}
+	ed.Lines.SetString(string(data))
+	state.Lines = ed.Lines
+	state.CurrentName = name
+	state.Dirty = false
+
+	txt := ed.Lines.String()
+	w, msg := ValidateContent(txt)
+	state.wind = w
+	if w == nil {
+		state.err = fmt.Errorf("%s", msg)
+	} else {
+		state.err = nil
+	}
+	if state.EditorErrText != nil {
+		state.EditorErrText.SetText(msg)
+		state.EditorErrText.NeedsRender()
+	}
+	if state.OnWindUpdated != nil {
+		state.OnWindUpdated()
+	}
+	return nil
+}
+
+// setEditorErrorFromContent validates the editor content and sets the error area text.
+// It uses state.Lines so it sees the same buffer as the viewer's recompute.
+func setEditorErrorFromContent(state *AppState, txt string) {
+	if state.EditorErrText == nil {
+		return
+	}
+	_, msg := ValidateContent(txt)
+	state.EditorErrText.SetText(msg)
+	state.EditorErrText.NeedsRender()
+}
+
+// Flow when the renderer needs JSON parsed and paths generated:
+//
+//  1. Content source: state.Lines (same as ed.Lines) holds the JSON text.
+//  2. Parse: internal.ParseWindFromJSONBytes([]byte(txt)) returns (*Wind, error).
+//     - On error: JSON syntax (Unmarshal) or structure (filament/mandrel/layers).
+//  3. Path gen: for each layer, internal.Layer2Path(mandrel, filament, &layer) returns ([]Point, error).
+//     - Fills layer.FWPath, .BWPath, .FullPath; returns error if params are invalid.
+//  4. Scene: if no error, internal.BuildXYZScene(scene, wind) builds the 3D view.
+//
+// We use ValidateContent(txt) as the single place that runs parse + path and returns
+// a display message, so the editor error area and viewer stay in sync.
+
+// formatEditorError returns a user-facing message for parse/path errors.
+// When there is no error it returns "no errors" so the error area is always visible.
+func formatEditorError(err error, fromPathgen bool) string {
+	if err == nil {
+		return "no errors (updated)"
+	}
+	msg := err.Error()
+	if fromPathgen {
+		return "Pathgen error: " + msg
+	}
+	if strings.Contains(msg, "failed to parse JSON") {
+		return "Invalid JSON: " + msg
+	}
+	return "Parsing error (mismatch between given fields and expected fields): " + msg
+}
+
+// ValidateContent parses txt as wind JSON, runs path generation for all layers,
+// and returns (wind, displayMessage). displayMessage is "no errors" on success, or
+// a labeled string (Invalid JSON / Parsing error / Pathgen error) on failure.
+// This is the single source of truth for validation and error text.
+func ValidateContent(txt string) (wind *internal.Wind, displayMsg string) {
+	w, err := internal.ParseWindFromJSONBytes([]byte(txt))
+	if err != nil {
+		return nil, formatEditorError(err, false)
+	}
+	for i := range w.Layers {
+		_, err = internal.Layer2Path(w.Mandrel, w.Filament, &w.Layers[i])
+		if err != nil {
+			return nil, formatEditorError(err, true)
+		}
+	}
+	return w, "no errors (ValidateContent)"
+}
+
 func setupViewer(parent *core.Frame, state *AppState, ed *textcore.Editor) {
-	// Error text stays under the render area.
-	errText := core.NewText(parent)
-	errText.Styler(func(s *styles.Style) {
-		s.Color = colors.Scheme.Error.Base
-	})
-
-	// 3D scene viewer with built-in mouse navigation:
-	// - Drag: orbit (Shift: pan)
-	// - Scroll: zoom
-	// Reduce sensitivity a bit from defaults.
-	xyz.OrbitFactor = 0.01
-	xyz.PanFactor = 0.0004
-
-	// Container for render + overlays, stacked so overlays appear on top.
 	renderFrame := core.NewFrame(parent)
 	renderFrame.Styler(func(s *styles.Style) {
 		s.Grow.Set(1, 1)
 		s.Display = styles.Stacked
 	})
 
+	// Create the viewer widget tree immediately so it participates in the
+	// initial layout. On web, deferring widget creation until after async
+	// WebGPU adapter/device probing can result in the underlying surface
+	// only becoming drawable after a subsequent resize.
+	setupViewerContent(renderFrame, state, ed)
+}
+
+func setupViewerContent(renderFrame *core.Frame, state *AppState, ed *textcore.Editor) {
+	println("setupViewerContent: entered")
+	xyz.OrbitFactor = 0.001
+
 	state.sc = xyz.NewScene()
-	// Darker background so mandrel and paths stand out.
 	state.sc.Background = colors.Scheme.SurfaceDim
 	xyz.NewAmbient(state.sc, "ambient", 0.35, xyz.DirectSun)
 	dir := xyz.NewDirectional(state.sc, "sun", 0.9, xyz.DirectSun)
@@ -136,15 +438,38 @@ func setupViewer(parent *core.Frame, state *AppState, ed *textcore.Editor) {
 		s.Grow.Set(1, 1)
 	})
 
-	// Overlay Home button in the top-left of the render.
+	// On web, the underlying WebGPU surface is sometimes not fully sized on
+	// first layout, so an initial render request can be dropped until after
+	// a resize/aspect-ratio change. Schedule a follow-up render on the next
+	// animation frame once the composer is definitely ready so the scene
+	// appears without requiring the user to resize the window or inspector.
+	internal.RunWhenReady(func() {
+		println("setupViewerContent: RunWhenReady firing initial sw.NeedsRender")
+		sw.NeedsRender()
+	})
+
 	header := core.NewFrame(renderFrame)
 	header.Styler(func(s *styles.Style) {
 		s.Direction = styles.Row
 		s.Align.Items = styles.Center
-		// Anchored top-left with a bit of margin.
+		s.Justify.Content = styles.SpaceBetween
 		s.Margin.Set(units.Dp(8))
 	})
-	homeBtn := core.NewButton(header).SetIcon(icons.Home).SetTooltip("Reset camera (home)")
+
+	leftHeader := core.NewFrame(header)
+	leftHeader.Styler(func(s *styles.Style) {
+		s.Direction = styles.Row
+		s.Align.Items = styles.Center
+		s.Gap.Set(units.Dp(4))
+	})
+
+	rightHeader := core.NewFrame(header)
+	rightHeader.Styler(func(s *styles.Style) {
+		s.Direction = styles.Row
+		s.Align.Items = styles.Center
+	})
+
+	homeBtn := core.NewButton(leftHeader).SetIcon(icons.Home).SetTooltip("Reset camera (home)")
 	homeBtn.OnClick(func(e events.Event) {
 		if state.sc == nil {
 			return
@@ -154,7 +479,22 @@ func setupViewer(parent *core.Frame, state *AppState, ed *textcore.Editor) {
 		sw.NeedsRender()
 	})
 
-	// Ensure arrow-key navigation etc also respects zoom clamp and clip planes.
+	// Simple stats label showing coarse 3D scene metrics for diagnostics.
+	statsLabel := core.NewText(rightHeader)
+	statsLabel.SetType(core.TextBodySmall)
+	statsLabel.Styler(func(s *styles.Style) {
+		s.Color = colors.Scheme.OnSurfaceVariant
+	})
+
+	updateStatsLabel := func() {
+		rs := state.lastRenderStats
+		statsLabel.SetText(
+			fmt.Sprintf("layers: %d  segments: %d  build: %.1f ms",
+				rs.Layers, rs.Segments, rs.BuildMillis),
+		)
+		statsLabel.NeedsRender()
+	}
+
 	sw.OnFirst(events.KeyChord, func(e events.Event) {
 		e.SetHandled()
 		if state.sc == nil || state.sc.NoNav {
@@ -165,10 +505,6 @@ func setupViewer(parent *core.Frame, state *AppState, ed *textcore.Editor) {
 		sw.NeedsRender()
 	})
 
-	// Mouse-drag navigation:
-	// - Left-drag: orbit / rotate
-	// - Right-drag: orbit / rotate (same as left)
-	// (Arrows still work via xyz's KeyChord handler.)
 	sw.OnFirst(events.SlideMove, func(e events.Event) {
 		e.SetHandled()
 		if state.sc == nil || state.sc.NoNav {
@@ -176,15 +512,12 @@ func setupViewer(parent *core.Frame, state *AppState, ed *textcore.Editor) {
 		}
 		pos := sw.Geom.ContentBBox.Min
 		e.SetLocalOff(e.LocalOff().Add(pos))
-
 		del := e.PrevDelta()
 		dx := float32(del.X)
 		dy := float32(del.Y)
-
 		cam := &state.sc.Camera
 		cdist := math32.Max(cam.DistanceTo(cam.Target), 1.0)
 		orbDel := xyz.OrbitFactor * cdist
-
 		if e.MouseButton() == events.Left || e.MouseButton() == events.Right {
 			state.sc.Camera.Orbit(-dx*orbDel, -dy*orbDel)
 			updateCameraClip(state)
@@ -192,8 +525,6 @@ func setupViewer(parent *core.Frame, state *AppState, ed *textcore.Editor) {
 		}
 	})
 
-	// Reduce scroll zoom sensitivity by scaling wheel delta before xyz handles it.
-	// We mark the event handled so the default handler doesn't also run.
 	sw.OnFirst(events.Scroll, func(e events.Event) {
 		e.SetHandled()
 		if state.sc == nil || state.sc.NoNav {
@@ -204,54 +535,59 @@ func setupViewer(parent *core.Frame, state *AppState, ed *textcore.Editor) {
 			return
 		}
 		me.Delta.Y *= 0.35
-		// Dolly zoom: change camera distance only (keep Target fixed).
-		// This avoids "moving around" behavior of zoom-to-cursor.
 		cdist := math32.Max(state.sc.Camera.DistanceTo(state.sc.Camera.Target), 1.0)
 		zoomDel := float32(.02) * cdist
 		zoom := float32(me.Delta.Y)
 		zoomPct := (zoom * zoomDel) / cdist
 		state.sc.Camera.Zoom(zoomPct)
-
-		// Clamp zoom to 10% - 1000% of "home" camera distance.
 		updateCameraClip(state)
 		sw.NeedsRender()
 	})
 
-	recompute := func() {
-		txt := state.Lines.String()
-		w, err := internal.ParseWindFromJSONText(txt)
-		if err == nil {
-			for i := range w.Layers {
-				_, err = internal.Layer2Path(w.Mandrel, w.Filament, &w.Layers[i])
-				if err != nil {
-					break
-				}
-			}
-		}
-		state.wind = w
-		state.err = err
-		if err != nil {
-			errText.SetText(err.Error())
-		} else {
-			errText.SetText("")
-		}
-
-		if err == nil && w != nil {
-			buildXYZScene(state, w)
+	updateViewerScene := func() {
+		w := state.wind
+		if w != nil && state.sc != nil {
+			println("updateViewerScene: non-nil wind and scene, calling BuildXYZScene, layers =", len(w.Layers))
+			state.mandrelCenter, state.mandrelRadius, state.lastRenderStats = internal.BuildXYZScene(state.sc, w)
+			updateCameraClip(state)
+			updateStatsLabel()
+			// On web, also schedule a follow-up render after the next
+			// animation frame once the composer is ready, to catch cases
+			// where the surface size or layout settles slightly after the
+			// scene rebuild triggered by a wind update.
+			internal.RunWhenReady(func() {
+				println("updateViewerScene: RunWhenReady firing follow-up sw.NeedsRender after BuildXYZScene")
+				sw.NeedsRender()
+			})
 		} else if state.sc != nil {
 			state.sc.DeleteChildren()
 			state.sc.Update()
+			state.lastRenderStats = internal.RenderStats{}
+			updateStatsLabel()
 		}
+		println("updateViewerScene: calling sw.NeedsRender immediately after scene update")
 		sw.NeedsRender()
 	}
 
-	// Render on every keystroke.
-	ed.On(events.Input, func(e events.Event) {
-		recompute()
-	})
+	// Only start building the WebGPU-backed 3D scene after we've confirmed
+	// adapter/device acquisition. This avoids attempting to render before
+	// the backend is actually ready, while still allowing the widget tree
+	// to be laid out immediately.
+	internal.WebGPUReady(func(ok bool) {
+		if !ok {
+			core.NewText(renderFrame).
+				SetType(core.TextBodyLarge).
+				SetText("3D viewer unavailable in this browser. For the full 3D view, please use a browser and version that supports WebGPU (navigator.gpu), such as a recent Chrome or Chromium build with hardware accelreation enabled.")
+			return
+		}
 
-	// Initial render.
-	recompute()
+		state.OnWindUpdated = updateViewerScene
+
+		// If the editor already validated and populated state.wind before the
+		// viewer was ready, render that initial state now.
+		println("setupViewerContent: WebGPUReady ok; calling initial updateViewerScene (hasWind =", state.wind != nil, ")")
+		updateViewerScene()
+	})
 }
 
 // updateCameraClip tightens the camera near/far planes around the mandrel bounding sphere

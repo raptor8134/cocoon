@@ -12,26 +12,66 @@ import (
 	"strings"
 )
 
-// Example usage of the Go path generation library.
-// This demonstrates how to:
-// 1. Create a mandrel
-// 2. Define layers
-// 3. Generate paths
-// 4. Convert to G-code
 func main() {
-	// If no arguments provided, launch GUI
-	// Otherwise, check if first argument is a JSON file
-	if len(os.Args) == 1 {
+	args := os.Args[1:]
+
+	// No arguments: launch the GUI.
+	if len(args) == 0 {
 		launchGUI()
-	} else {
-		firstArg := os.Args[1]
-		// Check if the first argument is a JSON file
-		if strings.HasSuffix(strings.ToLower(firstArg), ".json") {
-			runJSONMode(firstArg)
-		} else {
-			fmt.Println("Bad filename: `", firstArg, "`")
+		return
+	}
+
+	// Handle global flags (help, etc.) and reserve space for future flags.
+	for _, a := range args {
+		switch a {
+		case "-h", "--help", "help":
+			printUsage()
+			return
 		}
 	}
+
+	// Positional JSON file argument plus future options.
+	var jsonFile string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			// Unknown flag for now; keep usage text centralized.
+			fmt.Printf("Unknown option: %s\n\n", a)
+			printUsage()
+			os.Exit(1)
+		}
+		if jsonFile == "" {
+			jsonFile = a
+		} else {
+			fmt.Println("Too many positional arguments.")
+			printUsage()
+			os.Exit(1)
+		}
+	}
+
+	if jsonFile == "" {
+		fmt.Println("No JSON file specified.")
+		printUsage()
+		os.Exit(1)
+	}
+
+	if !strings.HasSuffix(strings.ToLower(jsonFile), ".json") {
+		fmt.Printf("Expected a .json file, got: %q\n\n", jsonFile)
+		printUsage()
+		os.Exit(1)
+	}
+
+	runJSONMode(jsonFile)
+}
+
+func printUsage() {
+	fmt.Println("Cocoon - CNC Operated COmposite Overwrap Navigator")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  cocoon                 Launch the GUI")
+	fmt.Println("  cocoon <file.json>     Generate G-code from a JSON configuration")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  -h, --help, help       Show this help message and exit")
 }
 
 // launchGUI starts the graphical user interface.
@@ -42,7 +82,7 @@ func runJSONMode(jsonFile string) {
 	fmt.Printf("Parsing JSON file: %s\n", jsonFile)
 
 	// Parse the JSON file into a Wind object
-	wind, err := internal.ParseWindFromJSON(jsonFile)
+	wind, err := internal.ParseWindFromJSONFile(jsonFile)
 	if err != nil {
 		log.Fatalf("Failed to parse JSON file: %v", err)
 	}
@@ -63,7 +103,7 @@ func runJSONMode(jsonFile string) {
 	}
 
 	// Convert to G-code
-	gcode := internal.Layers2Gcode(wind.Layers, "")
+	gcode := internal.Layers2Gcode(wind.Layers)
 
 	fmt.Printf("\nGenerated %d G-code commands\n", len(gcode))
 

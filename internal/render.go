@@ -1,21 +1,45 @@
-package main
+package internal
 
 import (
 	"image/color"
 	"math"
+	"time"
 
-	"cocoon/internal"
 	"cogentcore.org/core/colors"
 	"cogentcore.org/core/math32"
 	"cogentcore.org/core/xyz"
 )
 
-// buildXYZScene constructs the 3D mandrel and path visualization in the xyz.Scene.
-func buildXYZScene(state *AppState, w *internal.Wind) {
-	sc := state.sc
+// RenderStats captures coarse-grained metrics about a single scene rebuild.
+// It is intentionally simple and only tracks data we can reliably observe
+// at this layer; low-level WebGPU draw-call or buffer stats live in the
+// underlying Cogent Core / xyz renderer and are not exposed here.
+type RenderStats struct {
+	// Layers is the number of logical wind layers that contributed
+	// at least one path segment to the scene.
+	Layers int
+
+	// Segments is the total number of posed line segments created for
+	// all layers in the current scene.
+	Segments int
+
+	// BuildMillis is the wall-clock time spent inside BuildXYZScene
+	// for the last rebuild, in milliseconds.
+	BuildMillis float64
+}
+
+// BuildXYZScene constructs the 3D mandrel and path visualization in the xyz.Scene.
+// It returns the mandrel center and radius used for camera clipping, along with
+// coarse-grained render statistics for instrumentation/diagnostics.
+func BuildXYZScene(sc *xyz.Scene, w *Wind) (mandrelCenter math32.Vector3, mandrelRadius float32, stats RenderStats) {
 	if sc == nil || w == nil || w.Mandrel == nil {
+		println("BuildXYZScene: early return due to nil scene or wind/mandrel")
 		return
 	}
+
+	start := time.Now()
+
+	println("BuildXYZScene: starting scene construction")
 
 	// Replace scene contents but keep lights, meshes, etc.
 	sc.DeleteChildren()
@@ -41,6 +65,7 @@ func buildXYZScene(state *AppState, w *internal.Wind) {
 		if len(layer.FullPath) < 2 {
 			continue
 		}
+		stats.Layers++
 		pathGrp := xyz.NewGroup(sc)
 		pathGrp.SetName("path-" + layer.LType)
 
@@ -82,6 +107,8 @@ func buildXYZScene(state *AppState, w *internal.Wind) {
 				seg.Pose.Scale.Set(1, lineWidth, lineWidth)
 				xyz.SetLineStartEnd(&seg.Pose, st, ed)
 
+				stats.Segments++
+
 				// Make paths less affected by lighting: low shiny/reflective, modest emissive,
 				// and slightly reduced Bright so they read clearly without harsh shadows.
 				seg.Material.SetColor(clr)
@@ -99,8 +126,8 @@ func buildXYZScene(state *AppState, w *internal.Wind) {
 	l := float32(w.Mandrel.Length)
 	ctr := math32.Vec3(cx, 0, 0) // center of mandrel axis
 
-	state.mandrelCenter = ctr
-	state.mandrelRadius = l/2 + 20.0
+	mandrelCenter = ctr
+	mandrelRadius = l/2 + 20.0
 
 	// Explicitly set orbit/pan origin to mandrel axis center.
 	// xyz navigation orbits around Camera.Target.
@@ -111,10 +138,14 @@ func buildXYZScene(state *AppState, w *internal.Wind) {
 	sc.Camera.Pose.Pos = ctr.Add(math32.Vec3(-0.35*l, 1.25*r, 3.0*r+0.25*l))
 	sc.Camera.LookAtTarget()
 
-	updateCameraClip(state)
-
 	// Save the initial framing as "home" so the GUI button can restore it.
 	sc.SaveCamera("home")
+
+	stats.BuildMillis = float64(time.Since(start).Microseconds()) / 1000.0
+
+	println("BuildXYZScene: completed scene construction")
+
+	return
 }
 
 // mandrelRevolveMesh builds a surface-of-revolution mesh for the mandrel profile.
@@ -212,8 +243,8 @@ func mandrelRevolveMesh(name string, xPts, rPts []float64, radialSegs int) *xyz.
 // coordinate system, including angle, then the result is converted to Cartesian
 // via Point.ToRect when rendering. This allows the renderer to interpret large
 // angular moves as circular arcs without changing the underlying path.
-func interpPoint(p0, p1 internal.Point, t float64) internal.Point {
-	return internal.Point{
+func interpPoint(p0, p1 Point, t float64) Point {
+	return Point{
 		X: p0.X + t*(p1.X-p0.X),
 		Y: p0.Y + t*(p1.Y-p0.Y),
 		Z: p0.Z + t*(p1.Z-p0.Z),

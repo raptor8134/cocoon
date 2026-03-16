@@ -1,0 +1,16 @@
+# Cogent Core build config for Cocoon.
+# See: go run cogentcore.org/core help
+#      go run cogentcore.org/core build -help
+
+Name = "Cocoon"
+About = "CNC Operated Composite Overwrap Navigator – G-code generator for winding."
+
+# Build from the main package in cmd/cocoon (required for core build/run/pack).
+[Build]
+Dir = "cmd/cocoon"
+# Output defaults to bin/web for web target
+
+# Web build and serve options.
+[Web]
+GenerateHTML = false   # set true if app supports -generatehtml -nogui
+Port = "8080"
