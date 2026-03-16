@@ -15,7 +15,7 @@ import (
 //   - mode: Optional mode string (e.g., "DEMO" for demo mode)
 //
 // Returns a slice of G-code command strings.
-func Layers2Gcode(layers []Layer, mode string) []string {
+func Layers2Gcode(layers []Layer) []string {
 	// First: Concatenate all layer paths into one long toolpath
 	// Reset angle to zero between each one
 	pathFinal := make([]interface{}, 0) // Use interface{} to hold both Points and strings
@@ -103,15 +103,7 @@ func Layers2Gcode(layers []Layer, mode string) []string {
 			// Format G-code command
 			// In Python: f"{G} X{m.X} Y{m.Y} Z{m.Z} A{m.A} F{m.F*1000}"
 			// In Go: fmt.Sprintf does the same thing
-			var command string
-			if mode == "DEMO" {
-				// Demo mode: skip Y coordinate
-				command = fmt.Sprintf("%s X%.3f Z%.3f A%.3f F%.0f", g, p.X, p.Z, p.A, p.F*1000)
-			} else {
-				// Full mode: include all coordinates
-				command = fmt.Sprintf("%s X%.3f Y%.3f Z%.3f A%.3f F%.0f", g, p.X, p.Y, p.Z, p.A, p.F*1000)
-			}
-			gcodeList = append(gcodeList, command)
+			gcodeList = append(gcodeList, fmt.Sprintf("%s X%.3f Y%.3f Z%.3f A%.3f F%.0f", g, p.X, p.Y, p.Z, p.A, p.F*1000))
 
 		case string:
 			// Progress marker or other string
@@ -223,4 +215,3 @@ func DictList2Layers(dlayers []map[string]interface{}) ([]Layer, error) {
 
 	return layers, nil
 }
-

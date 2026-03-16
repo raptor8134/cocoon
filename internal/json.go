@@ -18,9 +18,9 @@ type WindJSON struct {
 	Layers   []map[string]interface{} `json:"layers"`
 }
 
-// ParseWindFromJSON parses a JSON file and creates a Wind object.
+// ParseWindFromJSONFile parses a JSON file and creates a Wind object.
 // This function handles both "cylindrical" and "arbitrary_axial" mandrel types.
-func ParseWindFromJSON(filename string) (*Wind, error) {
+func ParseWindFromJSONFile(filename string) (*Wind, error) {
 	// Read the JSON file
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -28,12 +28,6 @@ func ParseWindFromJSON(filename string) (*Wind, error) {
 	}
 
 	return ParseWindFromJSONBytes(data)
-}
-
-// ParseWindFromJSONText parses JSON/JSON5 text and creates a Wind object.
-// This is primarily for GUI/editor integrations.
-func ParseWindFromJSONText(text string) (*Wind, error) {
-	return ParseWindFromJSONBytes([]byte(text))
 }
 
 // ParseWindFromJSONBytes parses JSON/JSON5 bytes and creates a Wind object.
