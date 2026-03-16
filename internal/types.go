@@ -73,8 +73,17 @@ func NewPoint(x, y, z, a float64) Point {
 // This is used for rendering and visualization.
 // math.Sin and math.Cos work in radians, so we convert degrees to radians first.
 func (p Point) ToRect() PointRect {
+	// Keep trig arguments bounded for numerical stability.
+	// The winding generator intentionally lets A grow without bound across
+	// repeats, but sin/cos of huge angles loses precision and causes visible
+	// rendering artifacts. Normalizing here preserves the correct wrapped
+	// position on the mandrel surface.
+	a := math.Mod(p.A, 360.0)
+	if a < 0 {
+		a += 360.0
+	}
 	// math.Pi / 180 converts degrees to radians
-	rad := p.A * math.Pi / 180.0
+	rad := a * math.Pi / 180.0
 	return PointRect{
 		X: p.X,
 		Y: p.Z * math.Sin(rad),
