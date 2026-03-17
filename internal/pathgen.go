@@ -97,7 +97,7 @@ func GenPointsHoop(mandrel *Mandrel, stepover float64) ([]Point, []Point) {
 	// Go's for loop is more explicit than Python's range()
 	// for init; condition; post { } is like Python's for i in range(n)
 	for n := 0; n < nsteps; n++ {
-		// Calculate positions
+		// Calculate positions in a 0..Length local frame.
 		xfw := float64(n) * stepover // float64(n) converts int to float64
 		xbw := mandrel.Length - xfw
 

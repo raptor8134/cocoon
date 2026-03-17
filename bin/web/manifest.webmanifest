@@ -1,0 +1,24 @@
+{
+  "short_name": "Cocoon",
+  "name": "Cocoon",
+  "description": "CNC Operated Composite Overwrap Navigator – G-code generator for winding.",
+  "icons": [
+    {
+      "src": "icons/svg.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    },
+    {
+      "src": "icons/512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    },
+    {
+      "src": "icons/192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    }
+  ],
+  "start_url": "../",
+  "display": "standalone"
+}

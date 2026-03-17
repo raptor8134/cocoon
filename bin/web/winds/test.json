@@ -1,0 +1,26 @@
+{
+comment: "Test nosecone",
+filament: {
+   preset:  "amazon_fiberglass",
+   width: 40,
+},
+mandrel: 
+    {
+        type: "arbitrary_axial",
+        profile: "4in_3to1_tanogive.csv"
+    },
+layers :
+    [
+        {
+            type: "hoop",
+            stepover: 2, // in mm
+            nrepeat: 0  // so we end up back at the start and don't have to code
+                        // negative beginning helical winds (yet) lol
+        },
+        {
+            type: "helical",
+            angle: 45, // degrees, measured from axis
+            nrepeat: 1,
+        },
+    ]
+}

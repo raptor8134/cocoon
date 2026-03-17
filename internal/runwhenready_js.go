@@ -16,15 +16,12 @@ func RunWhenReady(f func()) {
 	tries := 0
 	cb = js.FuncOf(func(this js.Value, args []js.Value) any {
 		tries++
-		println("RunWhenReady: requestAnimationFrame tick, tries =", tries)
 		if coreComposerReady() {
-			println("RunWhenReady: coreComposerReady returned true, scheduling deferred callback on next RAF")
 			// Defer f to the *next* animation frame after the composer is ready.
 			// This approximates "after the first composer render", ensuring that
 			// layout and the underlying drawing surface have settled before f
 			// runs (e.g. to trigger an initial NeedsRender on webgpu).
 			js.Global().Call("requestAnimationFrame", js.FuncOf(func(this js.Value, a []js.Value) any {
-				println("RunWhenReady: deferred RAF firing, invoking callback")
 				f()
 				return nil
 			}))
