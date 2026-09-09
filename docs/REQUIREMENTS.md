@@ -631,6 +631,18 @@ Live guesses baked into current output.
 
 ## 8. Decisions made
 
+- **2026-09-08 — STEP is the primary CAD import route.** A revolved mandrel is
+  carried in analytic surface entities that state axis and radius explicitly,
+  so the profile is read rather than inferred from a mesh or a 2D sketch.
+  Crucially, this needs the whole simple-surface family: a cylinder is a
+  `CYLINDRICAL_SURFACE`, *not* a `SURFACE_OF_REVOLUTION`, so a parser looking
+  only for the latter would miss the body of every rocket mandrel.
+- **2026-09-08 — Imports are pedantic and visible, not strict.** Parse with
+  clear rules, then report the interpretation (axis chosen, surfaces accepted,
+  features rejected and why) and require confirmation. Rejecting unusual input
+  is unnecessary — bores, keyways and divots are filtered for free — but
+  guessing silently is worse, because a wrong profile yields a plausible wind
+  and a ruined part.
 - **2026-09-08 — Spindle direction is configurable** (`machine.spindle_direction`),
   because which way "forward" winds depends on which side of the carriage the
   payout eye sits on, and that varies between machines. This decouples the
@@ -815,7 +827,7 @@ Ranked by value per unit of effort:
    is an afternoon of work and it unblocks every workflow immediately, however
    awkwardly. Ship it as the floor, then make the nicer paths better than it.
 
-2. **DXF — the main import.** Your instinct is right for this workflow: a 2D
+2. **DXF — useful second, no longer the main route.** A 2D
    cross-section sidesteps the "is this really axisymmetric" question entirely,
    because the profile *is* the input rather than something inferred from it.
    All three packages export DXF from a sketch or drawing.
@@ -827,21 +839,17 @@ Ranked by value per unit of effort:
    which entities are the profile, and where is the axis? Construction lines,
    dimensions and the centreline all arrive in the same file.
 
-3. **STEP surface-of-revolution extraction — the approach not yet considered.**
+3. **STEP — CHOSEN as the primary import route (2026-09-08).**
    Full STEP parsing is a large job, which is why it looks unattractive. But a
-   revolved solid does not need full parsing: STEP represents it as a
-   `SURFACE_OF_REVOLUTION` entity holding **the generating curve and the axis,
-   explicitly**. That is precisely the profile we want, stored exactly, with the
-   axis given rather than guessed.
+   revolved mandrel does not need full parsing: the geometry is carried in a
+   small family of analytic surface entities that state their axis and radius
+   explicitly, so the profile is read rather than inferred. That removes the
+   axis ambiguity affecting DXF and STL both, and degrades correctly — a model
+   that is not axisymmetric simply produces no coaxial surfaces, which is the
+   right answer instead of a wrong profile.
 
-   So the work is not "parse STEP" but "find the revolution entities and read
-   their generating curve" — a much smaller target, and it removes the axis
-   ambiguity that affects DXF and STL both. It also degrades gracefully: a
-   model that is not a surface of revolution simply will not match, which is
-   the correct answer rather than a wrong profile.
-
-   Worth a spike before committing to DXF-only, because if it works it is
-   strictly better input.
+   See §10.1–10.4 for the entity model, edge-case analysis, and the export
+   instructions that keep it unambiguous.
 
 4. **STL — the robust fallback.** Universally exported and trivial to parse.
    For an axisymmetric mandrel: per vertex compute `r = sqrt(y² + z²)`, bin by
@@ -857,6 +865,114 @@ Ranked by value per unit of effort:
    auth. Fusion has an add-in API that could do the same locally.
 
 6. **SVG — deprioritised.** Superseded by DXF for this purpose.
+
+### 10.1 STEP import — entity model
+
+**A cylinder is not a `SURFACE_OF_REVOLUTION`.** ISO 10303-42 defines a family
+of simple surfaces, and revolved geometry lands in whichever is most specific:
+
+| Entity | Gives radius how | Where it shows up on a mandrel |
+|---|---|---|
+| `CYLINDRICAL_SURFACE` | radius attribute | the body |
+| `CONICAL_SURFACE` | radius + semi-angle | conical sections |
+| `SPHERICAL_SURFACE` | radius | rounded tip or end cap |
+| `TOROIDAL_SURFACE` | two radii | fillet between sections |
+| `SURFACE_OF_REVOLUTION` | evaluate the generating curve | ogives, general profiles |
+| `PLANE` | — | flat ends (bounds only) |
+
+So the parser must handle the whole family, not just `SURFACE_OF_REVOLUTION` —
+a parser looking only for the latter would miss the cylindrical body of every
+rocket mandrel. That is mostly good news: four of the five give `r(x)` in
+closed form straight from attributes, and only `SURFACE_OF_REVOLUTION` needs
+curve evaluation (and only when the generating curve is a B-spline rather than
+a line or arc).
+
+### 10.2 Edge cases
+
+Two filters do nearly all the work:
+
+1. **Coaxial** — keep only surfaces whose axis is collinear with the mandrel
+   axis.
+2. **Outermost** — at each axial station, take the largest radius.
+
+Most of what makes a real mandrel model "messy" is excluded by one or the other
+without special-casing, because bores, keyways and divots are each either
+not axisymmetric, not coaxial, or not outermost.
+
+| Case | Difficulty | How it resolves |
+|---|---|---|
+| **Cylinder + ogive stacked** | Moderate | Not really an edge case — it is the normal shape. Both surfaces are coaxial; order them by axial extent and concatenate. The work is getting extents (see below). |
+| **Coaxial bore / keyway hole** | Easy | The bore is coaxial but *smaller*, so the outermost rule drops it. The keyway slot itself is planar, not axisymmetric, so it never enters. Free. |
+| **Locating divots / nubs** | Easy | A divot's cylinder or sphere axis is radial, not axial, so the coaxial filter rejects it. Free — though a protruding nub is then silently ignored, which is correct for the winding surface but worth reporting. |
+| **Split lengthwise (half shells)** | Easy geometry, moderate detection | The *surface* entity is still the full revolve; only the face bound is partial. So the profile reads correctly even from one half. Detecting that it was a half is the harder part, and worth a warning rather than a rejection. |
+| **Split into axial segments** | Easy within one part | Same as the stacked case. Becomes harder only if exported as an **assembly**, where each part carries its own placement transform that must be composed. Avoidable by instruction. |
+
+**The genuinely hard parts** are not in that list:
+
+- **Face extents.** STEP surfaces are unbounded; the bounds live in the
+  topology (`ADVANCED_FACE` → `FACE_OUTER_BOUND` → `EDGE_LOOP` → `EDGE_CURVE` →
+  `VERTEX_POINT`). Knowing where the cylinder stops and the ogive starts means
+  walking that. Tractable — collect the vertex points per face and project onto
+  the axis — but it is the bulk of the work.
+- **Assembly transforms.** Multi-part files place each solid with its own
+  transformation. Composing those is real work and entirely avoidable by asking
+  for a single-body export.
+- **NURBS evaluation** for B-spline generating curves.
+- **Units.** STEP carries them explicitly; they must be read, not assumed.
+
+### 10.3 Strict input, or tolerant parsing?
+
+**Neither — be pedantic and *visible*.** Rejecting anything unusual is
+frustrating and, given the analysis above, unnecessary: the cases that look
+alarming are mostly free. But silently guessing is worse, because a wrong
+profile produces a plausible-looking wind and a ruined part.
+
+The right shape is: parse with clear rules, then **report the interpretation
+and require confirmation**:
+
+- the axis chosen, and why
+- each coaxial surface found, its type, radius range and axial extent
+- everything rejected, with the reason (not coaxial / not outermost / not
+  axisymmetric)
+- the resulting profile drawn in the 3D view before it is accepted (**MG9**)
+
+That turns every edge case above into something the user can see and judge,
+rather than something the parser has to be right about unaided. It also makes
+the export instructions advice rather than law — following them makes the
+report trivial to read, not the difference between working and failing.
+
+### 10.4 Export instructions (to be shipped in-app)
+
+Written to make parsing pedantic and unambiguous:
+
+1. **Export STEP AP214 or AP242.** AP203 works but carries less metadata.
+2. **Export a single body, not an assembly.** Assemblies add placement
+   transforms that must be composed; one body avoids the whole class of
+   problem. If the mandrel is split for printing, export the *assembled*
+   solid, or one segment at a time.
+3. **Align the mandrel axis to a global axis** (X or Z) and put the origin at
+   one end. Off-axis geometry is detectable but makes the report harder to
+   read, and an eccentric model becomes ambiguous.
+4. **Model the winding surface as a revolve** where possible. Lofts and
+   extrudes can produce B-spline surfaces that are not surfaces of revolution
+   at all, in which case there is no exact profile to recover.
+5. **Blunt the tip.** A winder cannot wind a point; a tip radius is required
+   geometry, not an approximation.
+6. **Bores, keyways, divots and nubs can stay.** They are filtered out
+   automatically. They will appear in the import report as rejected features,
+   which is a useful cross-check that the right surface was found.
+7. **Units: millimetres preferred.** They are read from the file either way,
+   but mm avoids a conversion to double-check.
+
+**Requirements:**
+
+- **MG11** Handle the full simple-surface family, not just
+  `SURFACE_OF_REVOLUTION`.
+- **MG12** Select the mandrel axis by coaxial-surface consensus, and report it.
+- **MG13** Report every accepted and rejected surface with its reason, and
+  require confirmation before use.
+- **MG14** Warn on partial revolves (half shells) and on assembly files.
+- **MG15** Read units from the file rather than assuming millimetres.
 
 ### Fit imported geometry to a parametric curve
 
@@ -874,9 +990,8 @@ useful quality signal about the import.
 - **MG3** Add a parametric mandrel type with the rocketry shapes above,
   including a blunted tip radius.
 - **MG4** Accept a **pasted point table** as the universal floor.
-- **MG5** Import from **DXF** (2D cross-section), including SPLINE evaluation.
-- **MG6** Spike **STEP `SURFACE_OF_REVOLUTION` extraction** before committing
-  to DXF-only; if viable it is strictly better input.
+- **MG5** Import from **STEP** — the primary route; see §10.1–10.4.
+- **MG6** Import from **DXF** (2D cross-section), including SPLINE evaluation.
 - **MG7** Import from **STL** by axisymmetric extraction, with a measured
   symmetry check rather than an assumption.
 - **MG8** Offer to **fit an imported profile to a parametric shape**.
