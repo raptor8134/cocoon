@@ -33,6 +33,15 @@ func main() {
 	select {} // keep the Go runtime alive to service calls
 }
 
+// sourceName pulls an optional filename from the second argument, used only
+// for the provenance header.
+func sourceName(args []js.Value) string {
+	if len(args) > 1 && args[1].Type() == js.TypeString {
+		return args[1].String()
+	}
+	return "(unsaved)"
+}
+
 // errResult is the shared shape for failures, so JS can always check .error.
 func errResult(msg string) any {
 	return map[string]any{"error": msg}
@@ -103,6 +112,12 @@ func generate(this js.Value, args []js.Value) any {
 		}
 	}
 
+	// Aggregate budget: a single layer can be within limits while the whole
+	// wind is not. Checked before any buffers are allocated.
+	if err := wind.CheckTotalPoints(w.Layers); err != nil {
+		return errResult(err.Error())
+	}
+
 	// Flatten every layer's path into one XYZ buffer, recording each layer's
 	// span so the viewer can colour them separately, and accumulate where the
 	// fiber actually lands so coverage can be reported.
@@ -151,7 +166,14 @@ func generate(this js.Value, args []js.Value) any {
 		minCovered = 0
 	}
 
-	gcode := wind.FormatGcodeLines(wind.Layers2Gcode(w.Layers, w.Machine))
+	// Full program with provenance header, so what the browser shows is what
+	// the CLI would write.
+	metrics := wind.ComputeMetrics(w.Layers, w.Machine)
+	gcode := wind.FormatGcodeLines(wind.BuildProgram(w, wind.ProgramInfo{
+		SourceName: sourceName(args),
+		SourceJSON: args[0].String(),
+		Density:    2.55, // E-glass
+	}))
 
 	totalPoints := 0
 	for i := range w.Layers {
@@ -179,6 +201,14 @@ func generate(this js.Value, args []js.Value) any {
 			"zmax":   w.Mandrel.ZMax,
 			"xmin":   w.Mandrel.XMin,
 			"xmax":   w.Mandrel.XMax,
+		},
+		"metrics": map[string]any{
+			"towLengthMm": metrics.TowLength,
+			"seconds":     metrics.Seconds,
+			"duration":    wind.FormatDuration(metrics.Seconds),
+			"moves":       metrics.Moves,
+			"minSeconds":  metrics.MinSeconds,
+			"massGrams":   metrics.TowMass(w.Filament, 2.55),
 		},
 		"stats": map[string]any{
 			"layers":   len(w.Layers),

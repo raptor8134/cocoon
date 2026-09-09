@@ -14,6 +14,10 @@ import (
 // The mandrel is defined by a series of (X, Z) points that form a profile.
 // X is the axial position, Z is the radius at that position.
 type Mandrel struct {
+	// profileSource records the CSV file a profile came from, so the program
+	// header can embed it. Empty for mandrels defined inline.
+	profileSource string
+
 	MType   string    // Mandrel type identifier
 	XPoints []float64 // X coordinates (axial positions)
 	ZPoints []float64 // Z coordinates (radii at each X position)
@@ -145,7 +149,17 @@ func NewMandrelFromCSV(filename string) (*Mandrel, error) {
 		points = append(points, []float64{x, z})
 	}
 
-	return NewMandrelFromPoints(points)
+	mandrel, err := NewMandrelFromPoints(points)
+	if err != nil {
+		return nil, err
+	}
+	mandrel.profileSource = filename
+	return mandrel, nil
+}
+
+// ProfileSource returns the CSV filename this mandrel was loaded from, if any.
+func (m *Mandrel) ProfileSource() (string, bool) {
+	return m.profileSource, m.profileSource != ""
 }
 
 // Interp performs linear interpolation to find the Z (radius) value at a given X position.

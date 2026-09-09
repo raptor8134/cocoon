@@ -92,7 +92,9 @@ func (p Point) ToRect() PointRect {
 }
 
 // Add performs vector addition on two Points.
-// Note: Feedrate is reset to 1.0 after addition (matching Python behavior).
+// Note: Feedrate is reset to 1.0 after addition. Adding two points is a
+// geometric operation; carrying either operand's feedrate through would be
+// arbitrary, so it resets to the default.
 func (p Point) Add(p2 Point) Point {
 	return Point{
 		X: p.X + p2.X,
@@ -228,6 +230,27 @@ func (a AxisLetters) withDefaults() AxisLetters {
 	return a
 }
 
+// FeedMode selects how feedrate is expressed in the emitted program.
+type FeedMode string
+
+const (
+	// FeedInverseTime emits G93, where F means "this move takes 1/F minutes".
+	// Preferred: the controller is given a duration, so it never has to
+	// reconcile linear millimetres with rotary degrees. Supported by LinuxCNC,
+	// Tormach, Mach3/4 and most industrial controls.
+	FeedInverseTime FeedMode = "inverse_time"
+
+	// FeedUnitsPerMinute emits G94 with a conventional feedrate.
+	//
+	// This is only correct if you know how the target reconciles linear and
+	// rotary motion. LinuxCNC and Duet both document the same rule -- if any
+	// linear axis moves, only the linear axes count; otherwise the rotary ones
+	// do -- so the emitter can compute an F that lands on the intended
+	// duration. Controllers that do not follow that rule (Marlin treats an
+	// extra axis as an extruder) will run at the wrong speed.
+	FeedUnitsPerMinute FeedMode = "units_per_minute"
+)
+
 // Machine holds properties of the winder itself rather than of the part.
 // This is the seed of the machine profile described in docs/REQUIREMENTS.md;
 // axis letters and G-code flavor will join it.
@@ -237,6 +260,14 @@ type Machine struct {
 
 	// Axes maps functional axes onto G-code letters.
 	Axes AxisLetters
+
+	// FeedMode selects G93 (default) or G94 output.
+	FeedMode FeedMode
+
+	// SurfaceSpeed is how fast the tow should be laid on the mandrel surface,
+	// in mm/s. This is the physical quantity the operator cares about; the
+	// emitted F word is derived from it. Zero falls back to Filament.Feedrate.
+	SurfaceSpeed float64
 }
 
 // Sign returns the multiplier to apply to emitted spindle angles.

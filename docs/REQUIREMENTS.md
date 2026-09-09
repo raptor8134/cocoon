@@ -45,6 +45,9 @@ contact — it does not mean it must survive arbitrary users.
   platform.
 - Emitting G-code for **more than one controller flavor**, selectable in
   settings.
+- **Accepting mandrel geometry from the CAD tools people already use** (§10).
+  Most mandrel geometry exists in CAD before Cocoon sees it, so this is the
+  largest usability lever available.
 
 ### Out of scope
 
@@ -554,6 +557,7 @@ provides total length; duration needs FR1–FR2.
 
 ### Later
 
+- **L0** Mandrel geometry sources: parametric curves and CAD import (§10).
 - **L1** Geodesic winding mode (**SL5**).
 - **L2** A "bucket": browser-persistent storage holding wind configs, CSV
   profiles, and a global `settings.json`, with individual download and a
@@ -602,9 +606,14 @@ Live guesses baked into current output.
    wrapping question in §3.
 2. **`DAInner`** is one one-way pass for hoop, the averaged per-circuit advance
    for helical. Nothing reads it today.
-3. **Only the first move is a rapid**; everything after is a feed move.
-4. **Progress markers**: `min(100, points/10)`, evenly spaced by index.
-   Superseded once FR1/FR2 land — they should key off elapsed time.
+3. ~~First move is a rapid~~ **RESOLVED — no rapids at all.** The operator
+   preps a wind by hand (a few turns at the Z=0 end to snug the tow), so the
+   machine is already at the start with fiber under tension. A rapid would
+   either slew away from that carefully set position or drag the tow at
+   maximum axis rate. Every emitted move is now `G1`.
+4. ~~Progress markers~~ **CONFIRMED** as `min(100, points/10)`. Now that
+   per-move durations exist (FR1/FR2), they can key off elapsed time; still
+   positional pending that switch.
 5. ~~Eye angle negation~~ **CONFIRMED** correct, and the spindle only ever runs
    forwards. Forward is **left-handed about the mandrel axis**, so the filament
    is pulled upwards over the top of the mandrel. That handedness has to be
@@ -615,8 +624,8 @@ Live guesses baked into current output.
    G-code, and does not advance the running angle — so muting one leaves every
    other layer's output byte-identical. The block editor greys it out and shows
    an "off" badge.
-7. **Filament width is the band width laid down**, used for coverage;
-   thickness would be radial buildup.
+7. ~~Filament width/thickness~~ **CONFIRMED**: width is the band width laid
+   down (used for coverage), thickness is radial buildup.
 
 ---
 
@@ -674,30 +683,169 @@ Live guesses baked into current output.
 
 ## 9. Open questions
 
-1. **How do you verify output today?** Eyeball the 3D view, dry-run the
-   machine, or wind a real part? Decides whether golden-file tests against the
-   Python original are worth building.
-2. **Is Python `gcode_gen` still the reference?** If output must match it
-   exactly, that's a testable contract. If Cocoon is now authoritative, several
-   "match Python" comments in the code should go.
-3. **What's the largest realistic wind?** Current safety limit is 5M points per
-   layer.
+1. ~~How is output verified?~~ **ANSWERED: by eye, in the 3D view.** No
+   hardware access at present. That raises the value of the coverage plot and
+   the slip check considerably — they are currently the only things that can
+   catch a bad wind before it reaches a machine. It also means the test suite
+   (L6) should target the *core*, where correctness is checkable against
+   closed-form results, rather than against machine behaviour.
+2. ~~Is `gcode_gen` still the reference?~~ **ANSWERED: no.** Cocoon is now
+   authoritative and free to diverge. The compatibility claims in the code have
+   been removed; the original algorithm survives only as commented derivation
+   where it aids understanding.
+3. ~~Largest realistic wind?~~ **ANSWERED and MEASURED.** See §9.1.
+### 9.1 Worst-case sizing — measured
+
+Stated absolute worst case: an **8" x 4' tube**, or an **8" base x 3' nosecone**,
+at a **0.2" (5.08 mm) wall**, wound with thin E-glass roving. Taking the tow as
+**3 mm wide x 0.1 mm thick** (the thin end of practical single-end roving; a
+thinner tow means more circuits, so this is the pessimistic choice), the wall
+needs ~51 layers.
+
+| Case | Points per layer | Total (51 layers) | Point memory |
+|---|---|---|---|
+| Tube, all hoop | 29,638 | 1.5 M | 0.06 GB |
+| Tube, helical 45° | 295,960 | 15.1 M | 0.6 GB |
+| **Tube, helical 15°** | **807,520** | **41.2 M** | **1.6 GB** |
+| Nosecone, helical 15° | 606,464 | 30.9 M | 1.2 GB |
+
+**The finding: the per-layer guard was correctly sized, the aggregate one was
+missing.** The heaviest single layer is ~808k points, comfortably inside the
+5M per-layer limit — but the total reaches ~41 million points, about 1.6 GB of
+`Point` structs before the renderer's vertex buffer is even allocated.
+
+`MaxTotalPoints` (8 M) now bounds the whole wind, chosen so that Points plus
+vertices stay inside what a browser tab can hold. The absolute worst case above
+therefore **does not fit**, and fails with a message rather than an OOM.
+
+Supporting it would need a change of strategy, not a bigger number:
+
+- **Stream to G-code** instead of materialising every layer's full path, keeping
+  only aggregate metrics.
+- **Decimate the render geometry** — the viewer does not need every point; an
+  LOD pass would cut vertices by an order of magnitude with no visible loss.
+
+Both are worth doing eventually; neither is needed for realistic parts, which
+sit one to two orders of magnitude below the cap.
+
 4. **Does the bucket (L2) exist to solve CSV-profiles-on-web, or is it a goal
    in its own right?** If the former, resolving profile references through an
    abstraction is the cheaper fix.
-5. **Ordering.** Thickness and coverage are now done. Remaining large pieces,
-   in suggested order:
-   1. **The angle formula fix** (§4.1b) — smallest change, largest correctness
-      impact, and everything downstream inherits the error until it lands.
-   2. **Flavor abstraction + axis remap + G93 feedrate** — these are one piece
-      of work; splitting them means doing the emitter twice.
-   3. **Filament usage and time estimates** — falls out of FR1/FR2 once feed is
-      real, and unblocks honest progress markers and the header block.
-   4. **Header/footer with embedded config** (§4.4).
-   5. **Slip checking** (§4.1) — most research-heavy, and benefits from having
-      coverage and real feedrates in place.
-   6. **Mandrel growth feedback** (CV5) — small, but changes multi-layer output,
-      so it wants a deliberate moment.
+5. **Ordering.** Items 1–4 are **DONE**:
+   1. ~~The angle formula fix~~ (§4.1b) — done, exact at every angle.
+   2. ~~Axis remap + feedrate~~ — lathe letters with aliasing, G93 inverse-time
+      with a G94 fallback, surface speed as the physical input.
+   3. ~~Filament usage and time estimates~~ — `ComputeMetrics`, cross-checked
+      against the coverage grid.
+   4. ~~Header/footer with embedded config~~ — provenance header, layer and
+      coverage detail in the footer, config recoverable byte-identically.
+
+   Remaining, and worth discussing before starting:
+   5. **Slip checking** (§4.1) — most research-heavy. Now more valuable than it
+      looked: with verification by eye and no hardware, this is one of the few
+      things that can catch a bad wind in advance.
+   6. **Mandrel growth feedback** (CV5) — small, but changes multi-layer output.
+
+   Not previously ranked, and arguably now ahead of both: **mandrel geometry
+   sources** (§10), because it is the biggest usability lever.
+
+---
+
+## 10. Mandrel geometry sources
+
+**This is the biggest usability lever in the project.** Most mandrel geometry
+already exists in CAD before Cocoon ever sees it, so the question is not "what
+file format do we invent" but "how many of the tools people already use can we
+accept work from".
+
+### Should profiles stay in separate CSVs?
+
+The original reasons were cleanliness when hand-editing JSON, and sharing one
+geometry across several wind files. The first no longer applies — the block
+editor means nobody has to read raw JSON — and the second is better served by
+making geometry cheap to express than by making it a separate file.
+
+**Recommendation: support both, and make inline the default.**
+
+- **Inline** (`profile: [[x, r], ...]`, already supported) makes a wind file
+  self-contained. It also removes the web CSV problem entirely rather than
+  working around it, because there is no file to resolve.
+- **By reference** stays available for genuinely shared geometry, resolved
+  through an abstraction rather than `os.Open`, so desktop and web can back it
+  differently.
+
+Note the header now embeds the profile alongside the config, so a *generated
+program* is self-contained regardless of which the source used.
+
+### Parametric curves — highest value, lowest effort
+
+Rather than storing sampled points at all, define the profile mathematically
+and sample it at whatever resolution the path generator needs.
+
+For rocketry the useful set is small:
+
+| Shape | Parameters |
+|---|---|
+| Cylinder | length, diameter |
+| **Tangent ogive** | base radius, fineness ratio (or length), **tip radius** |
+| Conical | base radius, length, tip radius |
+| Elliptical | base radius, length |
+| Von Kármán / LV-Haack | base radius, length |
+| Power series | base radius, length, exponent |
+| Composite | a sequence of the above, joined |
+
+The **tip radius** matters: a winder cannot wind a sharp point, so a blunted
+tip is not an approximation but a requirement — and it is exactly the parameter
+that a sampled CSV makes awkward to adjust.
+
+Advantages over sampled points: exact rather than interpolated, resolution-
+independent, a handful of numbers instead of dozens of rows, and the parameters
+are the ones a designer actually thinks in. Iterating a fineness ratio becomes
+editing one field instead of regenerating a CSV.
+
+### Importing from CAD
+
+Ranked by value per unit of effort:
+
+1. **STL — recommended first.** Every CAD package exports it, binary STL is
+   trivial to parse, and for an axisymmetric mandrel the profile falls straight
+   out: for each vertex compute `r = sqrt(y² + z²)`, bin by `x`, take the max
+   radius per bin. That is robust against triangulation density and does not
+   require interpreting curves at all. The only requirements are that the part
+   is modelled axis-aligned and that we know which axis (detectable, or asked).
+
+2. **DXF — good second.** A 2D cross-section as a polyline or spline is a
+   natural fit, and DXF is far simpler to parse than STEP. Suits workflows where
+   the profile is drawn rather than modelled.
+
+3. **SVG — plausible, fiddly.** Widely exportable, but SVG carries no reliable
+   unit convention (px vs mm survives export inconsistently), and the user must
+   identify which path is the profile and where the axis lies. Workable with a
+   guided import; not a first choice.
+
+4. **STEP — best fidelity, hardest.** The real interchange standard, but there
+   is no good pure-Go parser and the reference implementations are large C++
+   libraries. Hard to justify against STL for an axisymmetric part, since the
+   extra fidelity is mostly in features a surface of revolution does not have.
+
+**Requirements:**
+
+- **MG1** Support inline profiles as the self-contained default.
+- **MG2** Resolve referenced profiles through an abstraction, not the OS
+  filesystem, so desktop and web can back it differently.
+- **MG3** Add a parametric mandrel type with the rocketry shapes above,
+  including a blunted tip radius.
+- **MG4** Import a profile from **STL** by axisymmetric extraction.
+- **MG5** Import from **DXF**.
+- **MG6** Show the imported/derived profile in the 3D view before committing to
+  it, so a bad axis guess or unit error is visible immediately.
+- **MG7** Convert an imported profile to points **once, on import**, rather than
+  re-parsing CAD files during generation. Import is a user action; generation
+  runs on every keystroke.
+
+**[CONFIRM]** Which CAD packages do you and the team actually use? That decides
+whether DXF or STL is the more urgent second target, and whether STEP ever
+needs to happen.
 
 ---
 

@@ -100,8 +100,23 @@ func runJSONMode(jsonFile string) {
 		fmt.Printf("Layer %d (%s): Generated %d points\n", i+1, layer.LType, len(fullpath))
 	}
 
-	// Convert to G-code
-	gcode := wind.Layers2Gcode(w.Layers, w.Machine)
+	// Embed the source config (and profile, when one is used) so the program
+	// can be reproduced from the G-code alone.
+	srcBytes, _ := os.ReadFile(jsonFile)
+	info := wind.ProgramInfo{
+		SourceName: filepath.Base(jsonFile),
+		SourceJSON: string(srcBytes),
+		Density:    2.55, // E-glass; TODO: move to filament settings
+	}
+	if prof, ok := w.Mandrel.ProfileSource(); ok {
+		if csv, err := os.ReadFile(filepath.Join("profiles", prof)); err == nil {
+			info.ProfileName = prof
+			info.ProfileCSV = string(csv)
+		}
+	}
+
+	// Convert to a complete program: header, motion, footer.
+	gcode := wind.BuildProgram(w, info)
 
 	fmt.Printf("\nGenerated %d G-code commands\n", len(gcode))
 

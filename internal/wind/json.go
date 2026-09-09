@@ -12,7 +12,8 @@ import (
 )
 
 // WindJSON represents the structure of a JSON wind configuration file.
-// This matches the structure used in the Python gcode_gen project.
+// Cocoon is now the reference implementation for this format; it is no
+// longer required to match the original Python gcode_gen project.
 type WindJSON struct {
 	Comment  string                   `json:"comment"`
 	Filament map[string]interface{}   `json:"filament"`
@@ -118,6 +119,29 @@ func ParseWindFromJSONBytes(data []byte) (*Wind, error) {
 				return nil, err
 			}
 		}
+	}
+
+	if mj, ok := windJSON["machine"].(map[string]interface{}); ok {
+		if fm, ok := mj["feed_mode"].(string); ok {
+			switch FeedMode(fm) {
+			case FeedInverseTime, FeedUnitsPerMinute:
+				machine.FeedMode = FeedMode(fm)
+			default:
+				return nil, fmt.Errorf("machine feed_mode must be %q or %q, got %q",
+					FeedInverseTime, FeedUnitsPerMinute, fm)
+			}
+		}
+		if ss, ok := mj["surface_speed"].(float64); ok {
+			if ss <= 0 || math.IsNaN(ss) {
+				return nil, fmt.Errorf("machine surface_speed must be greater than 0, got %g", ss)
+			}
+			machine.SurfaceSpeed = ss
+		}
+	}
+	// Filament.Feedrate is the historical home for this; use it when the
+	// machine block does not override.
+	if machine.SurfaceSpeed == 0 {
+		machine.SurfaceSpeed = filament.Feedrate
 	}
 
 	// Create Wind object

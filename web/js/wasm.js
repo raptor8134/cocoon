@@ -76,13 +76,14 @@ export function canonicalText(obj) {
  * layers gives the {start, count} vertex range for one layer, so the viewer
  * can draw them as separately coloured line segments without copying.
  */
-export function generate(obj) {
-  const res = call("generate", JSON.stringify(obj));
+export function generate(obj, sourceName) {
+  const res = call("generate", JSON.stringify(obj), sourceName ?? "(unsaved)");
   const cov = res.coverage;
   return {
     gcode: res.gcode,
     layers: res.layers,
     stats: res.stats,
+    metrics: res.metrics,
     coverage: {
       x: asFloat64(cov.x),
       thickness: asFloat64(cov.thickness),

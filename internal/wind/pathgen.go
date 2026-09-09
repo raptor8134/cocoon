@@ -13,6 +13,21 @@ import (
 // with a message instead of hanging or OOM-ing the GUI.
 const maxLayerPoints = 5_000_000
 
+// MaxTotalPoints bounds the whole wind, not just one layer.
+//
+// Sizing came from the stated worst case (docs/REQUIREMENTS.md §9): an 8" x 4'
+// tube at a 0.2" wall, wound with thin 3 mm x 0.1 mm E-glass roving. That is
+// ~51 layers; the heaviest single layer is ~808k points, comfortably inside
+// maxLayerPoints, but the TOTAL reaches ~41 million points -- about 1.6 GB of
+// Point structs before the renderer's vertex buffer is even allocated.
+//
+// So the per-layer guard was correctly sized and the aggregate one was simply
+// missing. 8 million points is roughly 320 MB of Points plus ~100 MB of
+// vertices, which a browser tab can hold; past that the honest answer is that
+// this design materialises every point up front and cannot go further without
+// streaming or decimating. Failing with a message beats an OOM.
+const MaxTotalPoints = 8_000_000
+
 // gcd calculates the greatest common divisor of two integers.
 // This is a helper function for the helical path calculation.
 // Go's standard library has math/big for big integers, but for regular ints we implement it.
@@ -314,7 +329,8 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 		// even when the left-hand side is negative. Go's math.Mod, by contrast, can
 		// return a negative result. On non‑cylindrical profiles where the net angle
 		// change over a pass can wrap, this difference changes da_inner and thus
-		// the computed inner_repeat/da_end. We normalize explicitly to match Python.
+		// the computed inner_repeat/da_end, so normalize explicitly rather than
+		// relying on the accumulated value staying in range.
 		daInnerFW := mod360(fwpath[len(fwpath)-1].A - fwpath[0].A)
 		daInnerBW := mod360(bwpath[len(bwpath)-1].A - bwpath[0].A)
 		daInner := (daInnerFW + daInnerBW) / 2.0
@@ -354,7 +370,7 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 		daEndMin := 180.0 - 2.0*angle
 
 		// Find da_end that satisfies conditions
-		// Python:
+		// Original algorithm, kept as a derivation of the search below:
 		//   n = 0
 		//   da_end = -1
 		//   while da_end < da_end_min or gcd(int(da_inner_adjusted*inner_repeat/360),
@@ -363,8 +379,8 @@ func Layer2Path(mandrel *Mandrel, filament Filament, layer *Layer) ([]Point, err
 		//       da_inner_adjusted = da_inner + da_end
 		//       n += 1
 		//
-		// We replicate this logic exactly so both conditions must be satisfied
-		// (da_end >= da_end_min AND gcd(...) == 1) before we exit.
+		// Both conditions must hold before exiting: da_end >= da_end_min AND
+		// gcd(...) == 1, so successive circuits do not retrace each other.
 		// The smallest satisfying n is bounded by roughly
 		// (daEndMin + daInner) * innerRepeat / 360 plus a short coprimality
 		// search, so this cap is generous. It exists so that an unforeseen

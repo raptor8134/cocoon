@@ -70,7 +70,7 @@ function regenerate() {
 
   let result;
   try {
-    result = generate(prune(state.cfg));
+    result = generate(prune(state.cfg), state.name);
   } catch (err) {
     // The Go core is authoritative on validity; its messages name the
     // parameter and the limit, so surface them verbatim.
@@ -83,7 +83,10 @@ function regenerate() {
   renderCoverage(result.coverage);
   state.lastGcode = result.gcode;
   $("#gcode-out").textContent = result.gcode;
-  $("#gcode-hint").textContent = `${result.gcode.split("\n").length - 1} lines`;
+  const mt = result.metrics;
+  $("#gcode-hint").textContent =
+    `${result.gcode.split("\n").length - 1} lines · ${mt.duration} · ` +
+    `${(mt.towLengthMm / 1000).toFixed(1)} m tow · ${mt.massGrams.toFixed(0)} g`;
   setStats(result.stats);
   const ax = state.cfg.machine?.axes;
   if (ax) state.viewer?.setAxisLetters(ax);
