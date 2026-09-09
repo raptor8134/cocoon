@@ -1,0 +1,70 @@
+# Build the PWA and publish it to GitHub Pages.
+#
+# The built artifacts (cocoon.wasm, wasm_exec.js, sw.js) are deliberately NOT
+# committed -- see .gitignore. Committing a ~5 MB wasm on every build is what
+# grew this repository to 163 MB before its history was purged. Building here
+# keeps the repository source-only while still publishing a complete site.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Pages deployment needs these; nothing else in the workflow writes to the repo.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a run finish rather than cancelling it: a half-deployed site is worse
+# than a slightly stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify the core before publishing
+        run: |
+          go vet ./...
+          GOOS=js GOARCH=wasm go vet ./...
+          test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }
+
+      - name: Build the web bundle
+        run: ./scripts/build-web.sh
+
+      # The service worker precaches a fixed list of files. If the build ever
+      # stops producing one of them the site would install a broken cache and
+      # then serve it from cache, so fail loudly here instead.
+      - name: Check the precache manifest resolves
+        run: |
+          cd web
+          missing=0
+          for f in $(sed -n "s/^  '\.\/\(.*\)',$/\1/p" sw.js); do
+            [ -f "$f" ] || { echo "missing precache asset: $f"; missing=1; }
+          done
+          exit $missing
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

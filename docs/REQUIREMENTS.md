@@ -805,28 +805,66 @@ editing one field instead of regenerating a CSV.
 
 ### Importing from CAD
 
+Target packages: **Onshape and Fusion 360 primarily, some SolidWorks.**
+
 Ranked by value per unit of effort:
 
-1. **STL — recommended first.** Every CAD package exports it, binary STL is
-   trivial to parse, and for an axisymmetric mandrel the profile falls straight
-   out: for each vertex compute `r = sqrt(y² + z²)`, bin by `x`, take the max
-   radius per bin. That is robust against triangulation density and does not
-   require interpreting curves at all. The only requirements are that the part
-   is modelled axis-aligned and that we know which axis (detectable, or asked).
+1. **Paste a point table — do this first.** Every one of those packages can
+   produce a list of coordinates, and a textarea that accepts pasted
+   `x, r` rows needs no parser, no format detection, and no axis guessing. It
+   is an afternoon of work and it unblocks every workflow immediately, however
+   awkwardly. Ship it as the floor, then make the nicer paths better than it.
 
-2. **DXF — good second.** A 2D cross-section as a polyline or spline is a
-   natural fit, and DXF is far simpler to parse than STEP. Suits workflows where
-   the profile is drawn rather than modelled.
+2. **DXF — the main import.** Your instinct is right for this workflow: a 2D
+   cross-section sidesteps the "is this really axisymmetric" question entirely,
+   because the profile *is* the input rather than something inferred from it.
+   All three packages export DXF from a sketch or drawing.
 
-3. **SVG — plausible, fiddly.** Widely exportable, but SVG carries no reliable
-   unit convention (px vs mm survives export inconsistently), and the user must
-   identify which path is the profile and where the axis lies. Workable with a
-   guided import; not a first choice.
+   One caveat worth knowing before starting: **curved profiles usually export
+   as SPLINE entities**, which are NURBS and need evaluating — DXF is only
+   trivially parseable for LINE/ARC/LWPOLYLINE. Budget for a small NURBS
+   evaluator. There is also a semantic problem shared with every other format:
+   which entities are the profile, and where is the axis? Construction lines,
+   dimensions and the centreline all arrive in the same file.
 
-4. **STEP — best fidelity, hardest.** The real interchange standard, but there
-   is no good pure-Go parser and the reference implementations are large C++
-   libraries. Hard to justify against STL for an axisymmetric part, since the
-   extra fidelity is mostly in features a surface of revolution does not have.
+3. **STEP surface-of-revolution extraction — the approach not yet considered.**
+   Full STEP parsing is a large job, which is why it looks unattractive. But a
+   revolved solid does not need full parsing: STEP represents it as a
+   `SURFACE_OF_REVOLUTION` entity holding **the generating curve and the axis,
+   explicitly**. That is precisely the profile we want, stored exactly, with the
+   axis given rather than guessed.
+
+   So the work is not "parse STEP" but "find the revolution entities and read
+   their generating curve" — a much smaller target, and it removes the axis
+   ambiguity that affects DXF and STL both. It also degrades gracefully: a
+   model that is not a surface of revolution simply will not match, which is
+   the correct answer rather than a wrong profile.
+
+   Worth a spike before committing to DXF-only, because if it works it is
+   strictly better input.
+
+4. **STL — the robust fallback.** Universally exported and trivial to parse.
+   For an axisymmetric mandrel: per vertex compute `r = sqrt(y² + z²)`, bin by
+   `x`, take the max radius. Your concern is the right one — the part may not
+   actually be symmetric — but that is *detectable*: the spread of radii within
+   each bin measures it directly, so an asymmetric model can be rejected with a
+   number rather than producing a silently wrong profile.
+
+5. **Onshape REST API — worth considering for the primary tool.** Onshape is
+   cloud-native with a documented public API, so a profile could be pulled from
+   a document link rather than exported at all. Highest fidelity and lowest
+   user friction of any option, at the cost of being per-CAD work and needing
+   auth. Fusion has an add-in API that could do the same locally.
+
+6. **SVG — deprioritised.** Superseded by DXF for this purpose.
+
+### Fit imported geometry to a parametric curve
+
+Whatever the source, offer to **fit the imported points to one of the
+parametric shapes** and switch to that representation. Import once, then edit a
+fineness ratio instead of regenerating a file. It also turns a noisy scan or a
+coarse tessellation into an exact surface, and the residual of the fit is a
+useful quality signal about the import.
 
 **Requirements:**
 
@@ -835,17 +873,31 @@ Ranked by value per unit of effort:
   filesystem, so desktop and web can back it differently.
 - **MG3** Add a parametric mandrel type with the rocketry shapes above,
   including a blunted tip radius.
-- **MG4** Import a profile from **STL** by axisymmetric extraction.
-- **MG5** Import from **DXF**.
-- **MG6** Show the imported/derived profile in the 3D view before committing to
+- **MG4** Accept a **pasted point table** as the universal floor.
+- **MG5** Import from **DXF** (2D cross-section), including SPLINE evaluation.
+- **MG6** Spike **STEP `SURFACE_OF_REVOLUTION` extraction** before committing
+  to DXF-only; if viable it is strictly better input.
+- **MG7** Import from **STL** by axisymmetric extraction, with a measured
+  symmetry check rather than an assumption.
+- **MG8** Offer to **fit an imported profile to a parametric shape**.
+- **MG9** Show the imported/derived profile in the 3D view before committing to
   it, so a bad axis guess or unit error is visible immediately.
-- **MG7** Convert an imported profile to points **once, on import**, rather than
-  re-parsing CAD files during generation. Import is a user action; generation
-  runs on every keystroke.
+- **MG10** Convert an imported profile to points **once, on import**, rather
+  than re-parsing CAD files during generation. Import is a user action;
+  generation runs on every keystroke.
 
-**[CONFIRM]** Which CAD packages do you and the team actually use? That decides
-whether DXF or STL is the more urgent second target, and whether STEP ever
-needs to happen.
+### Deployment
+
+The app is a static site and deploys to **GitHub Pages** as-is. Verified: all
+asset references are relative, so a project-page subpath (`/cocoon/`) resolves
+correctly, and the service worker's precache list uses `./` paths that resolve
+against its own scope.
+
+The one blocker is that the build outputs (`cocoon.wasm`, `wasm_exec.js`,
+`sw.js`) are gitignored, so a repo-sourced Pages deploy would publish an
+incomplete site. `.github/workflows/pages.yml` builds them in CI instead, which
+keeps the repository source-only — committing a ~5 MB wasm per build is what
+grew `.git` to 163 MB before its history was purged.
 
 ---
 

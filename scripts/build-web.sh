@@ -35,11 +35,15 @@ cp "$ROOT"/winds/*.json "$WEB/winds/" 2>/dev/null || true
 # hash is identical, no new worker installs, and nothing is re-downloaded.
 echo "==> generating service worker"
 cd "$WEB"
+# Derived by globbing rather than listed by hand. A hand-maintained list goes
+# stale silently: a new module gets imported, is not added here, and the app
+# then works online but fails offline once the service worker serves its
+# precached set. (js/coverage.js was missing exactly this way.)
 ASSETS="index.html manifest.webmanifest cocoon.wasm wasm_exec.js
-css/app.css
-js/app.js js/model.js js/blocks.js js/viewer.js js/wasm.js js/store.js
-vendor/three.module.min.js vendor/OrbitControls.js
-icons/icon.svg"
+$(ls css/*.css 2>/dev/null)
+$(ls js/*.js 2>/dev/null)
+$(ls vendor/*.js 2>/dev/null)
+$(ls icons/* 2>/dev/null)"
 
 HASH=$(cat $ASSETS 2>/dev/null | sha1sum | cut -c1-12)
 
