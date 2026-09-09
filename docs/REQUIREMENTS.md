@@ -88,8 +88,16 @@ output, with every letter aliasable in Settings.
 
 The orientation follows from wanting forward rotation to be **+C**:
 
+| Axis | Direction | Notes |
+|---|---|---|
+| **X** | horizontal, front-facing | radial cross-feed; matches lathe +X toward the operator |
+| **Y** | vertical, up | completes the right-handed frame; nothing is emitted on it |
+| **Z** | along the mandrel | **+Z points opposite the direction the carriage advances** |
+| **A** | rotation about X | payout eye |
+| **C** | rotation about Z | mandrel; forward spin is +C |
+
 > +C about +Z rotates X toward Y (right-hand rule). Forward sweeps the mandrel
-> surface up and over the back, so **X = up** and **Y = back**, which makes
+> surface from front to up, so **X = front** and **Y = up**, which makes
 > **Z = X × Y point opposite the direction the carriage advances**.
 
 So the carriage travels in **−Z**. That is a real consequence, not a choice,

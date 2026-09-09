@@ -96,7 +96,8 @@ export class Viewer {
     this.mandrelGroup = new THREE.Group();
     this.pathGroup = new THREE.Group();
     this.axesGroup = new THREE.Group();
-    this.scene.add(this.mandrelGroup, this.pathGroup, this.axesGroup);
+    this.labelsGroup = new THREE.Group();
+    this.scene.add(this.mandrelGroup, this.pathGroup, this.axesGroup, this.labelsGroup);
 
     // Drawn direction of the spindle arrow; set from the config so the
     // picture matches what the machine will actually do.
@@ -141,6 +142,7 @@ export class Viewer {
     this.resizeObserver.disconnect();
     this.clearGroup(this.pathGroup);
     this.clearGroup(this.mandrelGroup);
+    this.clearGroup(this.labelsGroup);
     this.renderer.dispose();
   }
 
@@ -160,6 +162,7 @@ export class Viewer {
 
   setMandrelVisible(v) { this.mandrelGroup.visible = v; }
   setAxesVisible(v) { this.axesGroup.visible = v; }
+  setAxisLabelsVisible(v) { this.labelsGroup.visible = v; }
 
   /** Replace the scene contents from a generate() result. */
   update(result) {
@@ -221,80 +224,68 @@ export class Viewer {
 
   buildAxes({ length, zmax, xmin, xmax }) {
     this.clearGroup(this.axesGroup);
+    this.clearGroup(this.labelsGroup);
     const L = Math.max(length * 0.28, zmax * 1.5, 1);
     const origin = new THREE.Vector3(xmin ?? 0, 0, 0);
     const R = zmax ?? 25;
     const labelScale = L * 0.16;
     const A = this.axisLetters;
 
-    // Lathe convention (ISO 841), oriented so that the spindle turning forward
-    // is +C. That constraint fixes everything else:
+    // Lathe convention (ISO 841), oriented so forward rotation is +C:
     //
-    //   +C about +Z rotates X toward Y (right-hand rule). Forward sweeps the
-    //   surface up and over the back, so X = up and Y = back, which makes
-    //   Z = X x Y point OPPOSITE the direction the carriage advances.
+    //   X = horizontal, front-facing (the cross-slide direction on a lathe)
+    //   Y = vertical, up
+    //   Z = X x Y, which points OPPOSITE the direction the carriage advances
     //
-    // That last consequence is deliberately drawn rather than hidden: the
-    // carriage moving in -Z is surprising, and it is better seen than
-    // discovered later in a G-code file.
+    // That last consequence follows from the right-hand rule once +C is
+    // chosen; it is drawn rather than hidden. Labels carry only the letter and
+    // sign -- what each axis means lives in Settings.
+    const label = (text, css, pos) => {
+      const sprite = makeLabel(text, css, labelScale);
+      sprite.position.copy(pos);
+      this.labelsGroup.add(sprite);
+    };
+
     for (const a of [
-      { dir: [0, 1, 0], color: 0xff5a5a, css: "#ff8a8a", label: `+${A.radial} — radial (up)` },
-      // Y completes the right-handed linear set. Nothing is emitted on it --
-      // the machine has no second linear radial axis -- but drawing it makes
-      // the frame's handedness checkable by eye.
-      { dir: [0, 0, -1], color: 0x5aff7a, css: "#8dffa8", label: "+Y — (unused, completes frame)" },
+      { dir: [0, 0, 1], color: 0xff5a5a, css: "#ff8a8a", letter: A.radial },
+      { dir: [0, 1, 0], color: 0x5aff7a, css: "#8dffa8", letter: "Y" },
     ]) {
       const dir = new THREE.Vector3(...a.dir);
       this.axesGroup.add(new THREE.ArrowHelper(dir, origin, L, a.color, L * 0.13, L * 0.075));
-      const label = makeLabel(a.label, a.css, labelScale);
-      // The back-pointing axis foreshortens to almost nothing on screen, so
-      // push its label further out to keep it clear of the spindle arc.
-      const out = a.dir[2] === -1 ? 1.55 : 1.12;
-      label.position.copy(origin).addScaledVector(dir, L * out);
-      this.axesGroup.add(label);
+      label(`+${a.letter}`, a.css, origin.clone().addScaledVector(dir, L * 1.14));
     }
 
-    // The carriage axis runs along the mandrel, so it is offset below the
-    // surface to stay visible. It points from the far end back toward the
-    // origin, which is the +Z direction derived above.
+    // The carriage axis runs along the mandrel, offset below the surface to
+    // stay visible, pointing from the far end back toward the origin.
     const axialY = -R * 1.45;
     const axialLen = Math.max(((xmax ?? 0) - (xmin ?? 0)) * 0.55, L);
-    const axialFrom = new THREE.Vector3((xmin ?? 0) + axialLen, axialY, 0);
     this.axesGroup.add(
       new THREE.ArrowHelper(
-        new THREE.Vector3(-1, 0, 0), axialFrom, axialLen,
-        0x5a8aff, L * 0.13, L * 0.075
+        new THREE.Vector3(-1, 0, 0),
+        new THREE.Vector3((xmin ?? 0) + axialLen, axialY, 0),
+        axialLen, 0x5a8aff, L * 0.13, L * 0.075
       )
     );
-    const axialLabel = makeLabel(`+${A.carriage} — carriage`, "#8dabff", labelScale);
-    axialLabel.position.set((xmin ?? 0) - labelScale * 2.4, axialY, 0);
-    this.axesGroup.add(axialLabel);
+    label(`+${A.carriage}`, "#8dabff", new THREE.Vector3((xmin ?? 0) - labelScale * 1.4, axialY, 0));
 
-    // The payout eye rotates ABOUT the radial axis, so its letter belongs
-    // beside that arrow rather than on an axis of its own.
-    const eyeNote = makeLabel(`${A.eye} — eye rotates about ${A.radial}`, "#ffb0b0", labelScale * 0.82);
-    // Sit it partway up the radial arrow it refers to, rather than beyond the
-    // tip where the +X and spindle labels already compete for space.
-    eyeNote.position.copy(origin).addScaledVector(new THREE.Vector3(0, 1, 0), L * 0.5);
-    this.axesGroup.add(eyeNote);
-
-    // Spindle rotation indicator.
-    this.axesGroup.add(this.buildSpindleArrow(xmin, xmax, zmax, L));
+    this.axesGroup.add(this.buildSpindleArrow(xmin, xmax, zmax, L, label));
   }
 
   /** An arc with an arrowhead showing which way the mandrel turns. */
-  buildSpindleArrow(xmin, xmax, zmax, L) {
+  buildSpindleArrow(xmin, xmax, zmax, L, label) {
     const group = new THREE.Group();
     const r = (zmax ?? 25) * 1.35;
     const x = (xmin ?? 0) + ((xmax ?? 0) - (xmin ?? 0)) * 0.18;
 
     // Render frame is Y = r*sin(A), Z = r*cos(A), so increasing A sweeps from
     // +Z toward +Y: up over the top, which is the left-handed sense.
-    // Sweeping from -50 to 130 degrees runs up over the top (the left-handed
-    // sense); swapping the endpoints reverses the arrowhead with it.
-    let from = -50, to = 130;
+    // A short 30 degree arc is enough to read the direction; a long sweep just
+    // competes with the path geometry for attention. Centred between +X
+    // (front) and +Y (up), where it is visible from the default camera.
+    // Swapping the endpoints reverses the arrowhead with it.
+    let from = 30, to = 60;
     if (this.spindleReversed) [from, to] = [to, from];
-    const steps = 48;
+    const steps = 16;
     const pts = [];
     for (let i = 0; i <= steps; i++) {
       const aDeg = from + ((to - from) * i) / steps;
@@ -310,16 +301,14 @@ export class Viewer {
     const tangent = new THREE.Vector3(0, Math.cos(aEnd), -Math.sin(aEnd)).normalize();
     group.add(new THREE.ArrowHelper(tangent, tip, r * 0.28, 0xffc857, r * 0.28, r * 0.16));
 
-    // Park the label out along the arc rather than straight up, where it
-    // would sit on top of the +radial (up) arrow's label.
-    const labelA = (68 * Math.PI) / 180;
+    // Park the label out along the arc, clear of the +X and +Y arrows.
+    const labelA = (45 * Math.PI) / 180;
     const sign = this.spindleReversed ? "\u2212" : "+";
-    const dir = this.spindleReversed ? "reverse" : "forward";
-    const label = makeLabel(
-      `${sign}${this.axisLetters.spindle} — spindle (${dir})`,
-      "#ffd98a", L * 0.16);
-    label.position.set(x, r * 1.7 * Math.sin(labelA), r * 1.7 * Math.cos(labelA));
-    group.add(label);
+    label(
+      `${sign}${this.axisLetters.spindle}`,
+      "#ffd98a",
+      new THREE.Vector3(x, r * 1.32 * Math.sin(labelA), r * 1.32 * Math.cos(labelA))
+    );
     return group;
   }
 
@@ -328,9 +317,17 @@ export class Viewer {
     const cx = ((xmin ?? 0) + (xmax ?? length ?? 0)) / 2;
     const target = new THREE.Vector3(cx, 0, 0);
 
-    // Distance that fits the mandrel's bounding sphere in the vertical FOV,
-    // with a margin so it does not touch the edges.
-    const radius = Math.max(Math.hypot((length ?? 100) / 2, zmax ?? 25), 1);
+    // Distance that fits the scene's bounding sphere in the vertical FOV, with
+    // a margin so it does not touch the edges.
+    //
+    // The axis arrows and their labels reach beyond the mandrel -- the radial
+    // arrows extend to ~1.14x the axis length above centre -- so framing the
+    // mandrel alone clips the topmost label out of view. Include that extent.
+    const axisReach = Math.max((length ?? 100) * 0.28, (zmax ?? 25) * 1.5, 1) * 1.25;
+    const radius = Math.max(
+      Math.hypot((length ?? 100) / 2, Math.max(zmax ?? 25, axisReach)),
+      1
+    );
     const dist = (radius / Math.sin((this.camera.fov * Math.PI) / 360)) * 1.25;
 
     this.camera.position.set(cx + dist * 0.1, dist * 0.45, dist * 0.85);

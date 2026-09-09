@@ -89,6 +89,8 @@ function regenerate() {
   if (ax) state.viewer?.setAxisLetters(ax);
   state.viewer?.setSpindleReversed(state.cfg.machine?.spindle_direction === "reverse");
   state.viewer?.update(result);
+  // update() rebuilds the label sprites, so the checkbox has to be re-applied.
+  state.viewer?.setAxisLabelsVisible($("#show-axis-labels").checked);
   setStatus("no errors", "ok");
 }
 
@@ -402,6 +404,7 @@ async function main() {
   $("#btn-home").addEventListener("click", () => state.viewer.goHome());
   $("#show-mandrel").addEventListener("change", (e) => state.viewer.setMandrelVisible(e.target.checked));
   $("#show-axes").addEventListener("change", (e) => state.viewer.setAxesVisible(e.target.checked));
+  $("#show-axis-labels").addEventListener("change", (e) => state.viewer.setAxisLabelsVisible(e.target.checked));
 
   // Ctrl/Cmd+S saves rather than invoking the browser's page-save dialog.
   window.addEventListener("keydown", (e) => {

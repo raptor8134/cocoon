@@ -136,18 +136,24 @@
           <div class="block block-axes" id="axes-block"></div>
           <p class="cov-note">
             Filament winders have no standard axis lettering, so these are
-            configurable. Defaults follow the lathe convention (ISO 841):
-            <strong>Z</strong> along the spindle axis, <strong>X</strong> the
-            radial cross-slide, and rotations <strong>A</strong>/<strong>C</strong>
-            about X/Z.
+            configurable. Defaults follow the lathe convention (ISO 841), with
+            the frame oriented so forward rotation is <strong>+C</strong>:
           </p>
-          <p class="cov-note">
-            Note the consequence of wanting forward rotation to be
-            <strong>+C</strong>: by the right-hand rule <strong>+Z points
-            opposite the direction the carriage advances</strong>, so the
-            carriage travels in −Z. The 3D view draws it that way rather than
-            hiding it.
-          </p>
+          <ul class="axis-legend">
+            <li><b>X</b> — radial cross-feed. Horizontal, pointing front
+              (toward the operator).</li>
+            <li><b>Y</b> — vertical, up. Completes the right-handed frame;
+              nothing is emitted on it, as there is no second linear radial
+              axis.</li>
+            <li><b>Z</b> — carriage, along the mandrel axis. Note
+              <b>+Z points opposite the direction the carriage advances</b> —
+              that follows from the right-hand rule once +C is chosen, so the
+              carriage travels in −Z. The 3D view draws it that way rather than
+              hiding it.</li>
+            <li><b>A</b> — payout eye rotation, about X.</li>
+            <li><b>C</b> — mandrel rotation, about Z. Forward spin is +C;
+              switch it on the Design tab under Machine.</li>
+          </ul>
         </div>
       </div>
     </div>
@@ -161,6 +167,7 @@
       <button type="button" class="btn btn-icon" id="btn-home" title="Reset view">⌂</button>
       <label class="toggle"><input type="checkbox" id="show-mandrel" checked> Mandrel</label>
       <label class="toggle"><input type="checkbox" id="show-axes" checked> Axes</label>
+      <label class="toggle"><input type="checkbox" id="show-axis-labels" checked> Labels</label>
     </div>
     <div class="viewport-note" id="viewport-note" hidden></div>
   </section>

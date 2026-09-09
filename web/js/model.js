@@ -36,10 +36,10 @@ export const SPINDLE_DIRECTIONS = [
 export const DEFAULT_AXES = { carriage: "Z", eye: "A", radial: "X", spindle: "C" };
 
 export const AXIS_FIELDS = [
-  { key: "carriage", label: "Carriage", hint: "along the mandrel axis" },
-  { key: "radial", label: "Radial", hint: "cross-feed / mandrel radius" },
-  { key: "eye", label: "Payout eye", hint: "eye rotation" },
-  { key: "spindle", label: "Spindle", hint: "mandrel rotation" },
+  { key: "radial", label: "Radial", hint: "cross-feed; horizontal, front-facing" },
+  { key: "carriage", label: "Carriage", hint: "along the mandrel; +Z is opposite carriage advance" },
+  { key: "eye", label: "Payout eye", hint: "eye rotation, about the radial axis" },
+  { key: "spindle", label: "Spindle", hint: "mandrel rotation; forward is +C" },
 ];
 
 export function defaultConfig() {

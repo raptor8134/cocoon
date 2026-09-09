@@ -393,3 +393,17 @@ select { cursor: pointer; }
   background: color-mix(in srgb, var(--err) 10%, transparent);
   font-size: 12px;
 }
+
+/* --- settings: axis legend ------------------------------------------------ */
+
+.axis-legend {
+  margin: 10px 2px 0;
+  padding-left: 18px;
+  color: var(--fg-faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.axis-legend b {
+  color: var(--fg-dim);
+  font-family: var(--mono);
+}
