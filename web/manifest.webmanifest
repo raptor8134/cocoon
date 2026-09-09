@@ -1,0 +1,13 @@
+{
+  "name": "Cocoon - Filament Winding Navigator",
+  "short_name": "Cocoon",
+  "description": "CNC Operated COmposite Overwrap Navigator: filament winding path and G-code generator.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#12151a",
+  "theme_color": "#12151a",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

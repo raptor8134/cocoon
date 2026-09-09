@@ -1,0 +1,42 @@
+{
+comment: "6\" OD x 200mm long",
+filament: {
+   preset:  "amazon_fiberglass",
+},
+mandrel: 
+    {
+        type: "cylindrical",
+        dimensions: {
+            length: 200,
+            diameter: 200
+        }
+    },
+layers :
+    [
+        /*
+        {
+            type: "hoop",
+            stepover: 3, // in mm
+            nrepeat: 2  // so we end up back at the start and don't have to code
+                        // negative beginning helical winds (yet) lol
+        },
+        {
+            type: "helical",
+            angle: 80, // degrees, measured from axis
+            nrepeat: 1,
+        },
+        */
+        {
+            type: "helical",
+            angle: 70, 
+            nrepeat: 1,
+        },
+        /*
+        {
+            type: "helical",
+            angle: 60, 
+            nrepeat: 1,
+        },
+        */
+    ]
+}

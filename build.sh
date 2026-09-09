@@ -1,7 +1,10 @@
 #!/bin/sh
-#go build  -ldflags="-s -w" ./cmd/cocoon          # linux
-#GOOS=windows GOARCH=amd64 CGO_ENABLED=1 \
-#  CC=x86_64-w64-mingw32-gcc \
-#  CXX=x86_64-w64-mingw32-g++ \
-#  go build -ldflags="-s -w" ./cmd/cocoon/        # windows
-go run cogentcore.org/core build web -debug       # wasm
+# Stop at the first failing target instead of silently continuing to the next.
+set -e
+
+# CLI generator (native)
+go build -ldflags="-s -w" -o cocoon ./cmd/cocoon              # linux
+GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o cocoon.exe ./cmd/cocoon  # windows
+
+# PWA (wasm core + web UI)
+./scripts/build-web.sh

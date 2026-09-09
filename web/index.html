@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cocoon</title>
+<meta name="description" content="CNC Operated COmposite Overwrap Navigator - filament winding path generator">
+<meta name="theme-color" content="#12151a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js",
+    "three/addons/controls/OrbitControls.js": "./vendor/OrbitControls.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="boot" class="boot">
+  <div class="boot-inner">
+    <div class="boot-mark">C</div>
+    <div class="boot-text">Loading winding core…</div>
+    <div class="boot-bar"><div class="boot-fill"></div></div>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">C</span>
+    <span class="brand-name">Cocoon</span>
+  </div>
+
+  <nav class="filemenu">
+    <button type="button" class="btn" id="btn-new">New</button>
+    <button type="button" class="btn" id="btn-open">Open…</button>
+    <button type="button" class="btn" id="btn-save">Save</button>
+    <button type="button" class="btn" id="btn-saveas">Save As…</button>
+  </nav>
+
+  <div class="doc-name">
+    <span id="doc-title">untitled.json</span><span id="doc-dirty" class="dirty" hidden>*</span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="stats" id="stats" aria-live="polite"></div>
+</header>
+
+<main class="split">
+  <section class="pane pane-left">
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab active" role="tab" data-tab="design">Design</button>
+      <button type="button" class="tab" role="tab" data-tab="coverage">Coverage</button>
+      <button type="button" class="tab" role="tab" data-tab="gcode">G-code</button>
+      <button type="button" class="tab" role="tab" data-tab="settings">Settings</button>
+    </div>
+
+    <div class="tabpanel active" data-panel="design">
+      <div class="toolbar">
+        <div class="segmented" role="group" aria-label="Editor mode">
+          <button type="button" class="seg active" id="mode-blocks">Blocks</button>
+          <button type="button" class="seg" id="mode-json">JSON</button>
+        </div>
+      </div>
+
+      <div class="scroll" id="blocks-view">
+        <div class="section">
+          <h2 class="section-title">Mandrel</h2>
+          <div class="block block-mandrel" id="mandrel-block"></div>
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">Filament</h2>
+          <div class="block block-filament" id="filament-block"></div>
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">Machine</h2>
+          <div class="block block-machine" id="machine-block"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <h2 class="section-title">Layers</h2>
+            <span class="count" id="layer-count"></span>
+          </div>
+          <div id="layer-list" class="layer-list"></div>
+          <div class="add-row">
+            <button type="button" class="btn btn-add" data-add="hoop">+ Hoop</button>
+            <button type="button" class="btn btn-add" data-add="helical">+ Helical</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="scroll" id="json-view" hidden>
+        <textarea id="json-text" spellcheck="false" autocomplete="off"
+                  autocapitalize="off" autocorrect="off"
+                  aria-label="Wind configuration as JSON"></textarea>
+      </div>
+    </div>
+
+    <div class="tabpanel" data-panel="coverage">
+      <div class="toolbar">
+        <span class="hint" id="cov-summary"></span>
+      </div>
+      <div class="scroll">
+        <canvas id="cov-plot" class="cov-plot"></canvas>
+        <p class="cov-note">
+          Deposited thickness along the mandrel. The dashed line is the mean;
+          peaks are bulges where passes converge, troughs are thin spots. Red
+          ticks along the baseline mark stations where some angular sector
+          received no fiber at all — a bare stripe, not just a thin one.
+        </p>
+        <div id="cov-warn" class="cov-warn" hidden></div>
+      </div>
+    </div>
+
+    <div class="tabpanel" data-panel="gcode">
+      <div class="toolbar">
+        <button type="button" class="btn" id="btn-download-gcode">Download .gcode</button>
+        <span class="hint" id="gcode-hint"></span>
+      </div>
+      <div class="scroll">
+        <pre id="gcode-out" class="gcode"></pre>
+      </div>
+    </div>
+
+    <div class="tabpanel" data-panel="settings">
+      <div class="scroll">
+        <div class="section">
+          <h2 class="section-title">Axis letters</h2>
+          <div class="block block-axes" id="axes-block"></div>
+          <p class="cov-note">
+            Filament winders have no standard axis lettering, so these are
+            configurable. Defaults follow the lathe convention (ISO 841):
+            <strong>Z</strong> along the spindle axis, <strong>X</strong> the
+            radial cross-slide, and rotations <strong>A</strong>/<strong>C</strong>
+            about X/Z.
+          </p>
+          <p class="cov-note">
+            Note the consequence of wanting forward rotation to be
+            <strong>+C</strong>: by the right-hand rule <strong>+Z points
+            opposite the direction the carriage advances</strong>, so the
+            carriage travels in −Z. The 3D view draws it that way rather than
+            hiding it.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="statusbar" id="status" data-state="ok">no errors</div>
+  </section>
+
+  <section class="pane pane-right">
+    <div id="viewport" class="viewport"></div>
+    <div class="viewport-controls">
+      <button type="button" class="btn btn-icon" id="btn-home" title="Reset view">⌂</button>
+      <label class="toggle"><input type="checkbox" id="show-mandrel" checked> Mandrel</label>
+      <label class="toggle"><input type="checkbox" id="show-axes" checked> Axes</label>
+    </div>
+    <div class="viewport-note" id="viewport-note" hidden></div>
+  </section>
+</main>
+
+<input type="file" id="file-input" accept=".json,application/json" hidden>
+
+<script src="wasm_exec.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

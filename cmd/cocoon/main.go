@@ -4,7 +4,7 @@
 package main
 
 import (
-	"cocoon/internal"
+	"cocoon/internal/wind"
 	"fmt"
 	"log"
 	"os"
@@ -15,9 +15,10 @@ import (
 func main() {
 	args := os.Args[1:]
 
-	// No arguments: launch the GUI.
+	// No arguments: show usage. The GUI now lives in web/ and runs in the
+	// browser (see scripts/build-web.sh); this binary is the CLI generator.
 	if len(args) == 0 {
-		launchGUI()
+		printUsage()
 		return
 	}
 
@@ -67,35 +68,32 @@ func printUsage() {
 	fmt.Println("Cocoon - CNC Operated COmposite Overwrap Navigator")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  cocoon                 Launch the GUI")
+	fmt.Println("  cocoon                 Show this help")
 	fmt.Println("  cocoon <file.json>     Generate G-code from a JSON configuration")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  -h, --help, help       Show this help message and exit")
 }
 
-// launchGUI starts the graphical user interface.
-// Implementation is in gui.go
-
 // runJSONMode parses a JSON file and generates G-code from it.
 func runJSONMode(jsonFile string) {
 	fmt.Printf("Parsing JSON file: %s\n", jsonFile)
 
 	// Parse the JSON file into a Wind object
-	wind, err := internal.ParseWindFromJSONFile(jsonFile)
+	w, err := wind.ParseWindFromJSONFile(jsonFile)
 	if err != nil {
 		log.Fatalf("Failed to parse JSON file: %v", err)
 	}
 
-	fmt.Printf("Parsed mandrel: length=%.2fmm, radius=%.2fmm\n", wind.Mandrel.Length, wind.Mandrel.MaxZ())
+	fmt.Printf("Parsed mandrel: length=%.2fmm, radius=%.2fmm\n", w.Mandrel.Length, w.Mandrel.MaxZ())
 	fmt.Printf("Filament: width=%.2fmm, thickness=%.2fmm, feedrate=%.2f\n",
-		wind.Filament.Width, wind.Filament.Thickness, wind.Filament.Feedrate)
-	fmt.Printf("Number of layers: %d\n", len(wind.Layers))
+		w.Filament.Width, w.Filament.Thickness, w.Filament.Feedrate)
+	fmt.Printf("Number of layers: %d\n", len(w.Layers))
 
 	// Generate paths for all layers
-	for i := range wind.Layers {
-		layer := &wind.Layers[i]
-		fullpath, err := internal.Layer2Path(wind.Mandrel, wind.Filament, layer)
+	for i := range w.Layers {
+		layer := &w.Layers[i]
+		fullpath, err := wind.Layer2Path(w.Mandrel, w.Filament, layer)
 		if err != nil {
 			log.Fatalf("Failed to generate path for layer %d: %v", i, err)
 		}
@@ -103,7 +101,7 @@ func runJSONMode(jsonFile string) {
 	}
 
 	// Convert to G-code
-	gcode := internal.Layers2Gcode(wind.Layers)
+	gcode := wind.Layers2Gcode(w.Layers, w.Machine)
 
 	fmt.Printf("\nGenerated %d G-code commands\n", len(gcode))
 
@@ -119,7 +117,7 @@ func runJSONMode(jsonFile string) {
 	outputFile := filepath.Join(gcodeDir, fmt.Sprintf("%s.gcode", baseName))
 
 	// Format G-code
-	formattedGcode := internal.FormatGcodeLines(gcode)
+	formattedGcode := wind.FormatGcodeLines(gcode)
 
 	// Write to file
 	if err := os.WriteFile(outputFile, []byte(formattedGcode), 0644); err != nil {
