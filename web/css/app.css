@@ -149,11 +149,28 @@ html, body {
 
 .split {
   display: grid;
-  grid-template-columns: minmax(320px, 38%) 1fr;
+  /* --split-left is driven by the drag handle; the fallback is the initial
+     proportion. clamp() keeps a pane from being dragged out of existence. */
+  grid-template-columns: clamp(240px, var(--split-left, 38%), calc(100% - 280px)) auto 1fr;
   height: calc(100% - 46px);
 }
 .pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.pane-left { border-right: 1px solid var(--border); }
+.pane-left { border-right: none; }
+
+.splitter {
+  width: 6px;
+  cursor: col-resize;
+  background: var(--border);
+  transition: background .12s ease;
+  touch-action: none; /* let pointer events drive the drag, not scrolling */
+}
+.splitter:hover,
+.splitter.dragging { background: var(--accent); }
+.splitter:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* While dragging, stop the iframe/canvas from swallowing pointer moves and
+   stop the browser from selecting text across the panes. */
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing .viewport { pointer-events: none; }
 .pane-right { position: relative; background: var(--bg-sunken); }
 
 .tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--border); }
@@ -347,7 +364,10 @@ select { cursor: pointer; }
 
 /* Narrow screens: stack the panes instead of squeezing both. */
 @media (max-width: 860px) {
+  /* Stacked layout: the horizontal splitter has nothing to do, so hide it
+     rather than leaving a dead control on screen. */
   .split { grid-template-columns: 1fr; grid-template-rows: 1fr 45%; }
+  .splitter { display: none; }
   .pane-left { border-right: none; border-bottom: 1px solid var(--border); }
   .doc-name, .stats { display: none; }
 }

@@ -1,0 +1,43 @@
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('mandrel test'),'2;1');
+FILE_NAME('mandrel.step','2026-09-10T00:00:00',('cocoon'),(''),'','','');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 }'));
+ENDSEC;
+DATA;
+/* ---- axis system: mandrel axis along +Z at the origin ---- */
+#10 = CARTESIAN_POINT('',(0.,0.,0.));
+#11 = DIRECTION('',(0.,0.,1.));
+#12 = DIRECTION('',(1.,0.,0.));
+#13 = AXIS2_PLACEMENT_3D('',#10,#11,#12);
+
+/* ---- the winding surface: a 50mm radius cylinder ---- */
+#20 = CYLINDRICAL_SURFACE('body',#13,50.);
+
+/* ---- a cone continuing it (the nose) ---- */
+#30 = CARTESIAN_POINT('',(0.,0.,200.));
+#31 = AXIS2_PLACEMENT_3D('',#30,#11,#12);
+#32 = CONICAL_SURFACE('nose',#31,50.,0.2617993878);
+
+/* ---- coaxial bore for the drive shaft: SMALLER radius, same axis ---- */
+#40 = CYLINDRICAL_SURFACE('bore',#13,8.);
+
+/* ---- locating divot: small cylinder on a RADIAL axis ---- */
+#50 = CARTESIAN_POINT('',(50.,0.,60.));
+#51 = DIRECTION('',(1.,0.,0.));
+#52 = DIRECTION('',(0.,0.,1.));
+#53 = AXIS2_PLACEMENT_3D('',#50,#51,#52);
+#54 = CYLINDRICAL_SURFACE('divot',#53,3.);
+
+/* ---- a general revolve, for the ogive case ---- */
+#60 = CARTESIAN_POINT('',(0.,0.,0.));
+#61 = AXIS1_PLACEMENT('',#60,#11);
+#62 = CARTESIAN_POINT('',(50.,0.,0.));
+#63 = CARTESIAN_POINT('',(30.,0.,120.));
+#64 = POLYLINE('gen',(#62,#63));
+#65 = SURFACE_OF_REVOLUTION('ogive',#64,#61);
+
+/* ---- units: millimetres ---- */
+#70 = ( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );
+ENDSEC;
+END-ISO-10303-21;

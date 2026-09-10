@@ -752,14 +752,14 @@ sit one to two orders of magnitude below the cap.
    4. ~~Header/footer with embedded config~~ — provenance header, layer and
       coverage detail in the footer, config recoverable byte-identically.
 
-   Remaining, and worth discussing before starting:
-   5. **Slip checking** (§4.1) — most research-heavy. Now more valuable than it
-      looked: with verification by eye and no hardware, this is one of the few
-      things that can catch a bad wind in advance.
-   6. **Mandrel growth feedback** (CV5) — small, but changes multi-layer output.
-
-   Not previously ranked, and arguably now ahead of both: **mandrel geometry
-   sources** (§10), because it is the biggest usability lever.
+   Remaining:
+   5. **Mandrel geometry / CAD import** (§10) — IN PROGRESS. Biggest usability
+      lever, and slip work wants real mandrel shapes to be worth much.
+   6. **Slip checking** (§4.1) — scheduled next, after import. See §11.
+   7. ~~Mandrel growth feedback~~ (CV5) — **deprioritised.** At the wall
+      thicknesses in play the radius change per layer is a fraction of a
+      millimetre against a 50 mm radius, so feeding it back would move the
+      geometry by well under a percent. Revisit only if thick-wall parts appear.
 
 ---
 
@@ -974,6 +974,100 @@ Written to make parsing pedantic and unambiguous:
 - **MG14** Warn on partial revolves (half shells) and on assembly files.
 - **MG15** Read units from the file rather than assuming millimetres.
 
+### 10.5 STEP library evaluation — decided: write the Part 21 reader
+
+Surveyed 2026-09-10.
+
+| Option | Analytic surfaces? | Size | Verdict |
+|---|---|---|---|
+| **occt-import-js** | **No — tessellates** | ~3 MB wasm | Returns triangle meshes only, which throws away the radius/axis data that made STEP worth choosing over STL |
+| opencascade.js / libcascade | Yes (full OCCT API) | tens of MB | Dwarfs the 1.3 MB core for an occasional feature |
+| occt-wasm | Mesh-oriented | ~4 MB brotli | Same problem as occt-import-js |
+| STEPcode | Yes | C/C++ | **Go's wasm target has no cgo**, so it cannot be linked into the core at all |
+| Pure-Go STEP libraries | — | — | Nothing mature found |
+| **Write a Part 21 reader** | **Yes** | ~0 | **Chosen** |
+
+Two findings decided this. First, the browser-ready importers **tessellate** —
+their whole purpose is feeding a mesh viewer, so they hand back triangles and
+the analytic surfaces are gone. That leaves us doing axisymmetric extraction
+from a mesh, which is the STL approach with extra steps. Second, **Go's wasm
+target does not support cgo**, so every complete C/C++ implementation is
+unreachable from the core regardless of size.
+
+Writing it is smaller than it sounds. Part 21 is a simple textual format —
+`#12 = CARTESIAN_POINT('', (0., 1., 2.));` — with a value grammar of eight
+kinds and one wrinkle (complex instances). A mandrel needs roughly fifteen of
+the thousands of entity types in STEP, so the parser does not need to *know*
+the schema at all: it builds an addressable entity table and leaves
+interpretation to the caller.
+
+**Status: implemented and tested** (`internal/wind/step`, 464 lines). Verified
+against a file exercising the §10.2 edge cases: it reads the header and schema,
+finds `CYLINDRICAL_SURFACE` / `CONICAL_SURFACE` / `SURFACE_OF_REVOLUTION` with
+correct radii and placements, chases references, keeps complex instances
+intact, and skips comments. Six tests cover the value grammar (including
+doubled-quote escapes and scientific notation), the edge-case discrimination,
+and rejection of non-STEP input. **These are the project's first automated
+tests** (L6).
+
+Remaining work for the importer proper: the semantic layer — coaxial grouping,
+face extents from topology, NURBS evaluation for B-spline generating curves,
+and unit conversion.
+
+### 10.6 Should the source file be embedded in the design JSON?
+
+**No for the raw file; yes for the extracted profile and its provenance.**
+
+Against embedding the STEP itself:
+
+- Mandrel STEP files run from ~100 KB to several MB, and base64 adds a third
+  on top.
+- The design JSON is **autosaved to IndexedDB on every keystroke** and
+  round-tripped through the block editor. A multi-megabyte blob in that model
+  makes every edit and every save carry it.
+- The **G-code header embeds the config verbatim**, so an embedded source file
+  would land in every generated program too — the header is a few KB today.
+- It is not readable or editable by a human, so it fails the test the rest of
+  the format passes.
+
+Embed instead:
+
+- **The extracted profile points**, which is the inline-profile plan anyway:
+  small, readable, editable, and self-contained.
+- **Provenance metadata**: source filename, content hash, import date, the
+  chosen axis, and which surfaces were used. Enough to know where geometry came
+  from and to detect that the source has changed since.
+- **The parametric fit**, when fitting succeeds — smaller still, and better.
+
+That reproduces the *result* without carrying the *input*. If the original is
+wanted, the CAD system is where it lives.
+
+**Middle ground worth offering later:** keep the raw file in the browser
+bucket (L2) keyed by its hash, referenced from the design rather than inlined.
+Retained, deduplicated, and out of the hot path.
+
+### 10.7 Import interface
+
+- **Entry point:** an "Import from CAD…" button in the Mandrel block, opening
+  the file picker filtered to `.step` / `.stp`.
+- **Import review panel**, shown before anything is committed:
+  - the axis chosen, and the evidence for it
+  - every accepted surface: type, radius range, axial extent
+  - every rejected feature, with the reason (not coaxial / not outermost / not
+    axisymmetric)
+  - the resulting profile drawn in the viewport
+- **Selection in the viewport** — worth building. Render the candidate surfaces
+  as separately pickable objects so the user can click to include or exclude
+  one, and pick the axis when the guess is ambiguous. Three.js `Raycaster`
+  makes the picking straightforward; the work is keeping surface identity from
+  the parse through to the rendered object.
+
+  This is the "pedantic and visible" principle (§10.3) made concrete: instead
+  of the parser having to be right unaided, the user confirms an interpretation
+  they can see.
+- **Commit** converts to inline points (or a fitted parametric shape) once, at
+  import. Generation runs on every keystroke and must never re-parse CAD.
+
 ### Fit imported geometry to a parametric curve
 
 Whatever the source, offer to **fit the imported points to one of the
@@ -1013,6 +1107,65 @@ The one blocker is that the build outputs (`cocoon.wasm`, `wasm_exec.js`,
 incomplete site. `.github/workflows/pages.yml` builds them in CI instead, which
 keeps the repository source-only — committing a ~5 MB wasm per build is what
 grew `.git` to 163 MB before its history was purged.
+
+---
+
+## 11. Slip checking — plan
+
+Scheduled after CAD import (§10), because the check is most valuable on the
+tapered mandrels that import will make easy to work with, and near-trivial on
+the cylinders that are easy to define by hand.
+
+Recall the model (§4.1): a **geodesic** path needs no friction and satisfies
+`r·sin(α) = const`; any deviation is **non-geodesic**, held by friction, and
+characterised by a **slippage coefficient λ** that must stay under the static
+friction coefficient μ. Setting λ = 0 recovers the geodesic case, so it is one
+framework rather than two.
+
+### Phase 1 — measure
+
+- **S1.1** Compute the local winding angle `α(x)` along each generated path.
+  Available already: `tan(α) = r·dθ/dx` per segment.
+- **S1.2** Compute the Clairaut constant implied by each layer's start, so the
+  geodesic reference `α_geo(x) = arcsin(r₀/r)` can be compared against what the
+  layer actually does.
+- **S1.3** Compute **λ along the path**. This is the part that needs deriving
+  properly from the literature rather than guessed — λ is the ratio of
+  geodesic to normal curvature for the path on the surface, and getting the
+  surface-of-revolution expression wrong would produce confident, wrong
+  numbers. Budget reading time, and validate against the two cases with known
+  answers: λ = 0 for a true geodesic, and λ = 0 everywhere on a cylinder at
+  constant angle.
+
+### Phase 2 — report
+
+- **S2.1** A **λ plot against axial position**, alongside the coverage plot,
+  with μ drawn as a threshold line. Same shape as the coverage work, so it
+  reuses that plotting code.
+- **S2.2** **Highlight at-risk spans in the 3D view** — colour the path where
+  λ > μ. With verification being by eye, seeing *where* it slips matters more
+  than knowing that it does.
+- **S2.3** Report each helical layer's **geodesic turnaround radius and axial
+  position** (**SL6**), which is useful on its own and falls out of S1.2.
+
+### Phase 3 — act
+
+- **S3.1** Make **μ configurable**, per filament/process (literature values run
+  roughly 0.2–0.39, condition-dependent).
+- **S3.2** Replace the `180 − 2·angle` turnaround heuristic with a λ-based one
+  (**SL4**).
+- **S3.3** Add **geodesic mode** (**SL5**), deriving `α(x)` from Clairaut so a
+  wind is friction-independent by construction.
+- **S3.4** Optionally **vary feedrate** where λ approaches μ — the machinery
+  for this already exists, since G93 makes per-move duration a free parameter
+  (**FR5**).
+
+### Open question
+
+Should exceeding μ be a **hard error** or a **warning**? Leaning warning: μ is
+an estimate with real spread, the operator may know their setup better than the
+number does, and a hard block on an uncertain threshold will get worked around
+rather than heeded.
 
 ---
 

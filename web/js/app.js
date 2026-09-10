@@ -435,7 +435,62 @@ async function main() {
       "This browser cannot save directly to local files (Chromium only). Save will download a copy instead.";
   }
 
+  setupSplitter();
   registerServiceWorker();
+}
+
+/**
+ * Make the editor/viewport divider draggable.
+ *
+ * Uses pointer capture so the drag survives the pointer crossing the WebGL
+ * canvas, which would otherwise swallow the move events. Keyboard arrows work
+ * too, since a divider that can only be moved by mouse is a divider some
+ * people cannot move at all.
+ */
+function setupSplitter() {
+  const splitter = $("#splitter");
+  const split = document.querySelector(".split");
+  if (!splitter || !split) return;
+
+  const MIN = 240;
+  const RESERVE = 280; // keep this much for the viewport
+
+  const applyPx = (px) => {
+    const max = split.clientWidth - RESERVE;
+    const clamped = Math.max(MIN, Math.min(px, max));
+    split.style.setProperty("--split-left", `${clamped}px`);
+    // The viewport is a ResizeObserver client, so the 3D view follows on its
+    // own; nothing to notify here.
+  };
+
+  splitter.addEventListener("pointerdown", (e) => {
+    splitter.setPointerCapture(e.pointerId);
+    splitter.classList.add("dragging");
+    document.body.classList.add("resizing");
+    e.preventDefault();
+  });
+
+  splitter.addEventListener("pointermove", (e) => {
+    if (!splitter.hasPointerCapture(e.pointerId)) return;
+    applyPx(e.clientX - split.getBoundingClientRect().left);
+  });
+
+  const end = (e) => {
+    if (splitter.hasPointerCapture(e.pointerId)) splitter.releasePointerCapture(e.pointerId);
+    splitter.classList.remove("dragging");
+    document.body.classList.remove("resizing");
+  };
+  splitter.addEventListener("pointerup", end);
+  splitter.addEventListener("pointercancel", end);
+
+  splitter.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 48 : 16;
+    if (e.key === "ArrowLeft") { applyPx(splitter.getBoundingClientRect().left - split.getBoundingClientRect().left - step); e.preventDefault(); }
+    if (e.key === "ArrowRight") { applyPx(splitter.getBoundingClientRect().left - split.getBoundingClientRect().left + step); e.preventDefault(); }
+  });
+
+  // Double-click restores the default proportion.
+  splitter.addEventListener("dblclick", () => split.style.removeProperty("--split-left"));
 }
 
 function registerServiceWorker() {

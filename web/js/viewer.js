@@ -255,18 +255,22 @@ export class Viewer {
       label(`+${a.letter}`, a.css, origin.clone().addScaledVector(dir, L * 1.14));
     }
 
-    // The carriage axis runs along the mandrel, offset below the surface to
-    // stay visible, pointing from the far end back toward the origin.
+    // The carriage arrow shows the direction the carriage actually TRAVELS,
+    // running from the origin past the far end so its extent reads as the
+    // stroke. Because +Z points opposite carriage advance (see above), that
+    // direction is -Z, and the label says so.
     const axialY = -R * 1.45;
-    const axialLen = Math.max(((xmax ?? 0) - (xmin ?? 0)) * 0.55, L);
+    const span = Math.max((xmax ?? 0) - (xmin ?? 0), L);
+    const axialLen = span * 1.1;
     this.axesGroup.add(
       new THREE.ArrowHelper(
-        new THREE.Vector3(-1, 0, 0),
-        new THREE.Vector3((xmin ?? 0) + axialLen, axialY, 0),
+        new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(xmin ?? 0, axialY, 0),
         axialLen, 0x5a8aff, L * 0.13, L * 0.075
       )
     );
-    label(`+${A.carriage}`, "#8dabff", new THREE.Vector3((xmin ?? 0) - labelScale * 1.4, axialY, 0));
+    label(`\u2212${A.carriage}`, "#8dabff",
+      new THREE.Vector3((xmin ?? 0) + axialLen + labelScale * 1.4, axialY, 0));
 
     this.axesGroup.add(this.buildSpindleArrow(xmin, xmax, zmax, L, label));
   }
@@ -296,9 +300,15 @@ export class Viewer {
     group.add(new THREE.Line(geom, new THREE.LineBasicMaterial({ color: 0xffc857 })));
 
     // Arrowhead tangent to the arc at its leading end.
+    //
+    // d/dA (r sinA, r cosA) = (r cosA, -r sinA), which is the tangent for
+    // INCREASING A. Reversing the spindle sweeps the arc the other way, so the
+    // tangent has to be negated with it -- swapping the endpoints alone flipped
+    // the arc but left the arrowhead pointing the original way.
     const aEnd = (to * Math.PI) / 180;
+    const sweep = Math.sign(to - from) || 1;
     const tip = new THREE.Vector3(x, r * Math.sin(aEnd), r * Math.cos(aEnd));
-    const tangent = new THREE.Vector3(0, Math.cos(aEnd), -Math.sin(aEnd)).normalize();
+    const tangent = new THREE.Vector3(0, sweep * Math.cos(aEnd), -sweep * Math.sin(aEnd)).normalize();
     group.add(new THREE.ArrowHelper(tangent, tip, r * 0.28, 0xffc857, r * 0.28, r * 0.16));
 
     // Park the label out along the arc, clear of the +X and +Y arrows.
