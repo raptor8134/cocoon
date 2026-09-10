@@ -166,3 +166,66 @@ func TestRejectsNonStep(t *testing.T) {
 		t.Error("expected an error for non-STEP input")
 	}
 }
+
+// A profile written out must read back with the geometry intact. This is the
+// property that matters for recovery: if the original CAD file is lost, the
+// wind file has to be able to regenerate it.
+func TestWriteReadRoundTrip(t *testing.T) {
+	segs := []Seg{
+		{Kind: "line", Start: Point{0, 50}, End: Point{200, 50}},
+		{Kind: "arc", Start: Point{200, 50}, End: Point{260, 15.5},
+			Center: Point{200, 15.5}, Radius: 34.5},
+		{Kind: "spline", Degree: 3,
+			Control: []Point{{260, 15.5}, {280, 12}, {300, 9}, {320, 8}},
+			Knots:   []float64{0, 0, 0, 0, 1, 1, 1, 1}},
+	}
+
+	var buf strings.Builder
+	if err := WriteRevolution(&buf, segs, "mandrel.step", "mm"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	doc, err := Parse(strings.NewReader(buf.String()))
+	if err != nil {
+		t.Fatalf("re-parse of our own output failed: %v", err)
+	}
+
+	// One revolution per segment, all sharing the single axis.
+	revs := doc.OfType("SURFACE_OF_REVOLUTION")
+	if len(revs) != len(segs) {
+		t.Fatalf("got %d surfaces of revolution, want %d", len(revs), len(segs))
+	}
+	axis := revs[0].Params[2].Ref
+	for _, r := range revs[1:] {
+		if r.Params[2].Ref != axis {
+			t.Errorf("segments do not share one axis: #%d vs #%d", r.Params[2].Ref, axis)
+		}
+	}
+
+	// The curve kinds must survive, not be flattened to points.
+	for _, want := range []string{"LINE", "CIRCLE", "B_SPLINE_CURVE_WITH_KNOTS"} {
+		if len(doc.OfType(want)) == 0 {
+			t.Errorf("no %s in output: geometry was not preserved exactly", want)
+		}
+	}
+
+	// The spline's knot vector must come back in STEP's compressed form.
+	bs := doc.OfType("B_SPLINE_CURVE_WITH_KNOTS")[0]
+	if got := int(bs.Params[1].Num); got != 3 {
+		t.Errorf("spline degree = %d, want 3", got)
+	}
+	mult := bs.Params[6]
+	if mult.Kind != List || len(mult.List) != 2 {
+		t.Fatalf("knot multiplicities = %+v, want 2 entries", mult)
+	}
+	for i, m := range mult.List {
+		if m.Num != 4 {
+			t.Errorf("multiplicity[%d] = %v, want 4", i, m.Num)
+		}
+	}
+
+	// Reals must carry a decimal point or the file is not valid Part 21.
+	if strings.Contains(buf.String(), "(0,0,0)") {
+		t.Error("integers emitted where Part 21 requires reals")
+	}
+}

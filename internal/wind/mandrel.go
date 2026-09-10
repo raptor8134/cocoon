@@ -14,6 +14,11 @@ import (
 // The mandrel is defined by a series of (X, Z) points that form a profile.
 // X is the axial position, Z is the radius at that position.
 type Mandrel struct {
+	// profile is the exact curve definition this mandrel was sampled from,
+	// when one exists. The sampled arrays below are a derived cache; this is
+	// the record that survives and can be re-exported.
+	profile *Profile
+
 	// profileSource records the CSV file a profile came from, so the program
 	// header can embed it. Empty for mandrels defined inline.
 	profileSource string
@@ -155,6 +160,11 @@ func NewMandrelFromCSV(filename string) (*Mandrel, error) {
 	}
 	mandrel.profileSource = filename
 	return mandrel, nil
+}
+
+// Profile returns the exact curve definition, if this mandrel came from one.
+func (m *Mandrel) Profile() (*Profile, bool) {
+	return m.profile, m.profile != nil
 }
 
 // ProfileSource returns the CSV filename this mandrel was loaded from, if any.

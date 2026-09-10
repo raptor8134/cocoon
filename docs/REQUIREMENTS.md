@@ -1030,17 +1030,33 @@ Against embedding the STEP itself:
 - It is not readable or editable by a human, so it fails the test the rest of
   the format passes.
 
-Embed instead:
+Embed instead — **as exact curves, not sampled points**:
 
-- **The extracted profile points**, which is the inline-profile plan anyway:
-  small, readable, editable, and self-contained.
-- **Provenance metadata**: source filename, content hash, import date, the
-  chosen axis, and which surfaces were used. Enough to know where geometry came
-  from and to detect that the source has changed since.
-- **The parametric fit**, when fitting succeeds — smaller still, and better.
+- **The profile as curve segments** (lines, arcs, NURBS), which is what
+  `internal/wind/profile.go` now stores. Points are an *approximation* of
+  geometry that was defined exactly; keeping the curve keeps the information.
+  It is also smaller: a cylinder-plus-ogive profile is **~1 KB of exact curve
+  against 66 sampled points at 0.01 mm tolerance**, and the curve does not
+  have to guess a resolution in advance.
+- **Provenance**: source filename, **content hash**, the file's own timestamp,
+  the STEP schema and originating system, the chosen axis, and which surfaces
+  were used.
 
-That reproduces the *result* without carrying the *input*. If the original is
-wanted, the CAD system is where it lives.
+  The hash is authoritative — filenames get renamed and filesystem timestamps
+  get rewritten by copying, but content that hashes the same is the same
+  geometry. STEP's own `FILE_NAME` header also carries a timestamp and an
+  `originating_system` (e.g. which CAD wrote it), and those survive copying
+  where filesystem metadata does not.
+
+**Re-export.** Because the profile is held as curves plus an axis, it can be
+written back out as a STEP surface of revolution
+(`internal/wind/step.WriteRevolution`). A wind file is therefore a complete
+record of its geometry: losing the original CAD model becomes inconvenient
+rather than terminal. Verified by round-trip — written, re-parsed, with LINE,
+CIRCLE and B_SPLINE_CURVE_WITH_KNOTS all surviving as curves rather than being
+flattened.
+
+That reproduces the *geometry*, not merely a sampling of it.
 
 **Middle ground worth offering later:** keep the raw file in the browser
 bucket (L2) keyed by its hash, referenced from the design rather than inlined.
@@ -1067,6 +1083,42 @@ Retained, deduplicated, and out of the hot path.
   they can see.
 - **Commit** converts to inline points (or a fitted parametric shape) once, at
   import. Generation runs on every keystroke and must never re-parse CAD.
+
+### 10.8 Profile representation — exact curves
+
+Implemented in `internal/wind/profile.go`. A profile is an ordered list of
+**curve segments** in the (axial, radial) plane:
+
+| Kind | Carries | Comes from |
+|---|---|---|
+| `line` | endpoints | cylinders, cones, straight tapers |
+| `arc` | centre, radius, sweep | spheres, tori, tangent-ogive noses |
+| `spline` | degree, control points, knots, weights | general CAD curves |
+| `polyline` | points | hand-entered profiles, CSV imports |
+
+One representation covers all three sources — hand entry, STEP import, and the
+parametric rocketry shapes (§10, MG3), which are just an arc or a fitted
+spline. Splines are evaluated with **de Boor's algorithm** rather than explicit
+basis functions: it is numerically stable and handles the repeated end knots
+that CAD exports use constantly, without special cases.
+
+`Mandrel` stays the sampled working form, because path generation wants a flat
+array and a binary search rather than curve evaluation per point. **Sampling is
+a derived cache**, rebuilt from the profile, and it adapts to curvature rather
+than using a fixed count — measured on a cylinder-plus-ogive:
+
+| Tolerance | Points |
+|---|---|
+| 1.0 mm | 10 |
+| 0.1 mm | 18 |
+| 0.01 mm | 66 |
+
+So a nearly-straight run costs almost nothing while a tight nose radius gets
+the density it needs, and a straight segment is never subdivided at all.
+
+A malformed spline (too few knots for its degree) falls back to its chord
+rather than producing NaNs, since a NaN would propagate silently into the whole
+generated path.
 
 ### Fit imported geometry to a parametric curve
 
@@ -1144,7 +1196,10 @@ framework rather than two.
   reuses that plotting code.
 - **S2.2** **Highlight at-risk spans in the 3D view** — colour the path where
   λ > μ. With verification being by eye, seeing *where* it slips matters more
-  than knowing that it does.
+  than knowing that it does. Report it at two levels: the affected **axial
+  range** (so it can be related to the mandrel) and the affected **layers** (so
+  it can be related to the design), because a warning that says only "this wind
+  may slip" is not actionable.
 - **S2.3** Report each helical layer's **geodesic turnaround radius and axial
   position** (**SL6**), which is useful on its own and falls out of S1.2.
 
@@ -1160,12 +1215,35 @@ framework rather than two.
   for this already exists, since G93 makes per-move duration a free parameter
   (**FR5**).
 
-### Open question
+### Decided
 
-Should exceeding μ be a **hard error** or a **warning**? Leaning warning: μ is
-an estimate with real spread, the operator may know their setup better than the
-number does, and a hard block on an uncertain threshold will get worked around
-rather than heeded.
+Exceeding μ is a **warning, not an error** — μ is an estimate with real spread,
+the operator may know their setup better than the number does, and a hard block
+on an uncertain threshold gets worked around rather than heeded. It must
+identify the affected axial range and layers (S2.2).
+
+### Later: where do μ values come from?
+
+Deferred, but worth recording the leads. Needed eventually: plausible
+max/min μ for the materials in use, and how much to slow down when approaching
+it (**S3.4**).
+
+Known industry approaches, **to be verified against the literature rather than
+taken from here**:
+
+- **Capstan / belt-friction test.** Wrap tow around a sample of the mandrel
+  material at a known wrap angle and measure tension in against tension out;
+  `T2 = T1·e^(μβ)` gives μ directly. Standard for filament-over-surface
+  friction and needs little apparatus.
+- **Non-geodesic winding trial.** Wind paths at increasing deviation from
+  geodesic and find the deviation at which the tow first slips; λ at onset is
+  μ for that combination. This is the method the filament-winding literature
+  uses, and is what produced the commonly quoted 0.2–0.39 range.
+- Conditions matter more than the number: wet versus dry, resin system, tow
+  tension, mandrel surface finish and release agent all move it.
+
+Starting point: *Slippage coefficient measurement for non-geodesic
+filament-winding process* (Composites Part A), already cited in Sources.
 
 ---
 
