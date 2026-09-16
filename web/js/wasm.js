@@ -58,6 +58,11 @@ function call(name, ...args) {
   return res;
 }
 
+/** Convert a JS object result into a plain object, unwrapping js.Value maps. */
+function plain(v) {
+  return v;
+}
+
 /** Parse JSON5/JSON source into a plain object. Throws on invalid input. */
 export function parseConfig(text) {
   return JSON.parse(call("parse", text).json);
@@ -103,6 +108,20 @@ export function generate(obj, sourceName) {
       xmin: res.mandrel.xmin,
       xmax: res.mandrel.xmax,
     },
+  };
+}
+
+/**
+ * Parse a STEP file and return its candidate surfaces for review.
+ *
+ * Returns { hash, filename, modified, header, axis, candidates[] }. Nothing is
+ * committed: the caller decides which candidates become the mandrel.
+ */
+export function importStep(bytes, filename, lastModifiedMs) {
+  const res = call("importStep", bytes, filename ?? "", lastModifiedMs ?? 0);
+  return {
+    ...res,
+    candidates: res.candidates.map((c) => ({ ...c, segments: JSON.parse(c.segments) })),
   };
 }
 

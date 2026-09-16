@@ -1062,7 +1062,7 @@ That reproduces the *geometry*, not merely a sampling of it.
 bucket (L2) keyed by its hash, referenced from the design rather than inlined.
 Retained, deduplicated, and out of the hot path.
 
-### 10.7 Import interface
+### 10.7 Import interface — IMPLEMENTED
 
 - **Entry point:** an "Import from CAD…" button in the Mandrel block, opening
   the file picker filtered to `.step` / `.stp`.
@@ -1081,8 +1081,53 @@ Retained, deduplicated, and out of the hot path.
   This is the "pedantic and visible" principle (§10.3) made concrete: instead
   of the parser having to be right unaided, the user confirms an interpretation
   they can see.
-- **Commit** converts to inline points (or a fitted parametric shape) once, at
-  import. Generation runs on every keystroke and must never re-parse CAD.
+- **Commit** stores the accepted surfaces as exact curve segments under a new
+  `profile` mandrel type. Generation samples them; it never re-parses CAD.
+
+**What shipped.** `internal/wind/step.ReadModel` interprets the entity table:
+it picks the mandrel axis by **consensus** (the axis most surfaces share,
+rather than the first one seen), walks `ADVANCED_FACE` topology for extents,
+reads units, and classifies every surface. Two filters do the discrimination
+described in §10.2, and both were needed:
+
+- **not coaxial** rejects locating divots and nubs outright;
+- **inside the outer envelope** rejects bores — and this had to compare against
+  the envelope of *all* other surfaces, not pairwise, because a drive-shaft
+  bore spans body and nose together so no single surface contains it. The
+  pairwise version missed exactly the case the filter exists for.
+
+The review panel shows provenance and every surface with its extent, radius
+range and verdict; hovering a row highlights that surface in 3D, and clicking a
+surface in the viewport toggles its row. Rejected surfaces are listed rather
+than hidden, because seeing a bore correctly identified is how you know the
+right surface was found.
+
+**Verified end to end** against a fixture carrying all four §10.2 cases: body
+and nose accepted with correct extents, bore rejected by envelope, divot
+rejected by axis, and the resulting profile generating a wind.
+
+### 10.9 What gets stored on import
+
+Answering "hash for the system, everything else for the human":
+
+| Field | Purpose |
+|---|---|
+| `sha256` | **System-level verification only.** Shown truncated with the full value on hover; it answers "is this the same file", not anything a person needs to read. |
+| `filename` | Human recognition |
+| `modified` | Filesystem timestamp — advisory, since copying rewrites it |
+| `timestamp` (STEP header) | The file's *own* date, which survives copying |
+| `originating_system` | Which CAD wrote it (e.g. Onshape) |
+| `author`, `organization` | From the STEP header |
+| `schema` | AP214 / AP242 |
+| `units` | As read from the file, not assumed |
+| `axis` | Which axis the importer chose |
+| `surfaces` | Which surfaces were accepted, by id and name |
+| `imported` | When Cocoon read it |
+
+Identity is content: names get renamed and filesystem timestamps get rewritten
+by copying, so the hash is the only field that answers the question reliably.
+The rest exist so a person can recognise the file and judge whether the
+interpretation was right.
 
 ### 10.8 Profile representation — exact curves
 

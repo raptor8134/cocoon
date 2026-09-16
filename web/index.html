@@ -173,10 +173,23 @@
       <label class="toggle"><input type="checkbox" id="show-axis-labels" checked> Labels</label>
     </div>
     <div class="viewport-note" id="viewport-note" hidden></div>
+
+    <div class="import-review" id="import-review" hidden>
+      <div class="import-head">
+        <h2>Review CAD import</h2>
+        <span class="hint" id="import-count"></span>
+      </div>
+      <div class="import-body" id="import-body"></div>
+      <div class="import-foot">
+        <button type="button" class="btn" id="import-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="import-accept">Use as mandrel</button>
+      </div>
+    </div>
   </section>
 </main>
 
 <input type="file" id="file-input" accept=".json,application/json" hidden>
+<input type="file" id="step-input" accept=".step,.stp,model/step" hidden>
 
 <script src="wasm_exec.js"></script>
 <script type="module" src="js/app.js"></script>

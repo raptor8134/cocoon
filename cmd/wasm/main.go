@@ -22,9 +22,10 @@ import (
 
 func main() {
 	js.Global().Set("cocoonCore", map[string]any{
-		"parse":     js.FuncOf(parse),
-		"canonical": js.FuncOf(canonical),
-		"generate":  js.FuncOf(generate),
+		"parse":      js.FuncOf(parse),
+		"canonical":  js.FuncOf(canonical),
+		"generate":   js.FuncOf(generate),
+		"importStep": js.FuncOf(importStep),
 	})
 	// Signal readiness so the page can stop showing its loading state.
 	if cb := js.Global().Get("cocoonCoreReady"); cb.Type() == js.TypeFunction {

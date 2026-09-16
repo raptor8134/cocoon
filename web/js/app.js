@@ -5,6 +5,8 @@ import { defaultConfig, normalize, prune, quickCheck } from "./model.js";
 import { renderMandrel, renderFilament, renderMachine, renderAxisSettings, renderLayers, enableReorder } from "./blocks.js";
 import { Viewer } from "./viewer.js";
 import { drawCoverage } from "./coverage.js";
+import { importStep } from "./wasm.js";
+import { showImportReview } from "./stepimport.js";
 import * as store from "./store.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -135,7 +137,11 @@ function renderCoverage(cov) {
 // --- rendering ------------------------------------------------------------
 
 function renderAll() {
-  const hooks = { onChange: onValueChange, onStructure: onStructureChange };
+  const hooks = {
+    onChange: onValueChange,
+    onStructure: onStructureChange,
+    onImport: () => $("#step-input").click(),
+  };
   renderMandrel($("#mandrel-block"), state.cfg, hooks);
   renderFilament($("#filament-block"), state.cfg, hooks);
   renderMachine($("#machine-block"), state.cfg, hooks);
@@ -392,6 +398,25 @@ async function main() {
   $("#btn-save").addEventListener("click", () => doSave(false));
   $("#btn-saveas").addEventListener("click", () => doSave(true));
 
+  $("#step-input").addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (file) await handleStepFile(file);
+    e.target.value = "";
+  });
+
+  // Clicking a candidate surface in the 3D view toggles it, so the list and
+  // the geometry are two views of one selection.
+  $("#viewport").addEventListener("click", (e) => {
+    if ($("#import-review").hidden) return;
+    const id = state.viewer?.pickCandidate(e.clientX, e.clientY);
+    if (id == null) return;
+    const box = document.querySelector(`#import-body .cand input[data-id="${id}"]`);
+    if (box) {
+      box.checked = !box.checked;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+
   $("#file-input").addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (file) loadText(await file.text(), file.name);
@@ -491,6 +516,40 @@ function setupSplitter() {
 
   // Double-click restores the default proportion.
   splitter.addEventListener("dblclick", () => split.style.removeProperty("--split-left"));
+}
+
+/**
+ * Read a STEP file and open the review panel.
+ *
+ * Parsing is synchronous inside wasm and a large assembly can take a moment,
+ * so the status bar says what is happening rather than the UI appearing to
+ * hang.
+ */
+async function handleStepFile(file) {
+  setStatus(`Reading ${file.name}…`, "busy");
+  let result;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    result = importStep(bytes, file.name, file.lastModified);
+  } catch (err) {
+    setStatus(`Import failed: ${err.message}`, "error");
+    return;
+  }
+
+  const accepted = result.candidates.filter((c) => !c.rejected).length;
+  setStatus(
+    `${file.name}: ${accepted} of ${result.candidates.length} surfaces look like the mandrel. Review and confirm.`,
+    accepted > 0 ? "ok" : "error"
+  );
+
+  showImportReview(result, state.viewer, ({ segments, source }) => {
+    state.cfg.mandrel = { type: "profile", tolerance: 0.01, profile: { segments, source } };
+    setDirty(true);
+    renderAll();
+    scheduleRegen(0);
+    saveDraft();
+    setStatus(`Imported ${segments.length} curve segments from ${source.filename}.`, "ok");
+  });
 }
 
 function registerServiceWorker() {

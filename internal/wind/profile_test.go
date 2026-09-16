@@ -122,3 +122,45 @@ func TestProfileToMandrel(t *testing.T) {
 		}
 	}
 }
+
+// The profile mandrel type must survive the JSON round trip that the UI and
+// the saved wind file both go through.
+func TestProfileMandrelFromJSON(t *testing.T) {
+	cfg := `{
+	  filament: { width: 20 },
+	  mandrel: {
+	    type: "profile",
+	    tolerance: 0.05,
+	    profile: {
+	      segments: [
+	        { kind: "line", start: {x: 0, r: 50}, end: {x: 200, r: 50} },
+	        { kind: "line", start: {x: 200, r: 50}, end: {x: 280, r: 15} }
+	      ],
+	      source: { filename: "nosecone.step", sha256: "abc123", originating_system: "Onshape" }
+	    }
+	  },
+	  layers: [ { type: "hoop", stepover: 5, nrepeat: 1 } ]
+	}`
+	w, err := ParseWindFromJSONBytes([]byte(cfg))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := w.Mandrel.Interp(100); math.Abs(got-50) > 1e-6 {
+		t.Errorf("radius at x=100 = %v, want 50", got)
+	}
+	if got := w.Mandrel.Interp(240); math.Abs(got-32.5) > 0.2 {
+		t.Errorf("radius at x=240 = %v, want ~32.5 (mid-taper)", got)
+	}
+	prof, ok := w.Mandrel.Profile()
+	if !ok {
+		t.Fatal("mandrel did not retain its exact profile")
+	}
+	if len(prof.Segments) != 2 {
+		t.Errorf("got %d segments, want 2", len(prof.Segments))
+	}
+	// Provenance must survive: it is the whole point of recording it.
+	if prof.Source == nil || prof.Source.SHA256 != "abc123" ||
+		prof.Source.OriginatingSystem != "Onshape" {
+		t.Errorf("source provenance lost: %+v", prof.Source)
+	}
+}

@@ -8,6 +8,11 @@ import (
 	"os"
 	"strings"
 
+	// stdjson is the real encoding/json. go-json5 (aliased as json below) is a
+	// permissive reader for hand-written config, but it cannot unmarshal into
+	// nested structs, so structured decoding goes through the standard library.
+	stdjson "encoding/json"
+
 	json "github.com/KevinWang15/go-json5"
 )
 
@@ -240,6 +245,8 @@ func parseMandrel(mandrelData interface{}) (*Mandrel, error) {
 		return parseCylindricalMandrel(mandrelMap)
 	case "arbitrary_axial":
 		return parseArbitraryAxialMandrel(mandrelMap)
+	case "profile":
+		return parseProfileMandrel(mandrelMap)
 	default:
 		return nil, fmt.Errorf("unsupported mandrel type: %s", mandrelType)
 	}
@@ -275,6 +282,37 @@ func parseCylindricalMandrel(mandrelMap map[string]interface{}) (*Mandrel, error
 	}
 
 	return NewMandrelFromPoints(points)
+}
+
+// parseProfileMandrel builds a mandrel from exact curve segments.
+//
+// This is the form CAD import produces. The segments are the record; the
+// sampled points path generation uses are derived from them, so the stored
+// geometry stays exact regardless of what resolution any particular run needed.
+func parseProfileMandrel(mandrelMap map[string]interface{}) (*Mandrel, error) {
+	raw, ok := mandrelMap["profile"]
+	if !ok {
+		return nil, fmt.Errorf("profile mandrel must have a 'profile' field")
+	}
+	// Round-trip through encoding/json rather than hand-decoding every field:
+	// Profile already carries the json tags, and a hand-rolled decoder here
+	// would be a second definition of the format to keep in step.
+	blob, err := stdjson.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("profile: %w", err)
+	}
+	var prof Profile
+	if err := stdjson.Unmarshal(blob, &prof); err != nil {
+		return nil, fmt.Errorf("profile: %w", err)
+	}
+	if len(prof.Segments) == 0 {
+		return nil, fmt.Errorf("profile has no segments")
+	}
+	tol := 0.01
+	if t, ok := mandrelMap["tolerance"].(float64); ok && t > 0 {
+		tol = t
+	}
+	return prof.ToMandrel(tol)
 }
 
 // parseArbitraryAxialMandrel creates a Mandrel from a profile (CSV file or points).

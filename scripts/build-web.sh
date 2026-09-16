@@ -33,6 +33,21 @@ cp "$ROOT"/winds/*.json "$WEB/winds/" 2>/dev/null || true
 # Hash every asset the service worker precaches. Any change to any of them
 # produces a new cache name, so the worker updates; if nothing changed the
 # hash is identical, no new worker installs, and nothing is re-downloaded.
+# Syntax-check the modules before they ship. A parse error in one module takes
+# down every module that imports it, and the only symptom is a blank app with
+# a console message -- which is a slow way to find a missing brace.
+if command -v node >/dev/null 2>&1; then
+  echo "==> checking JS syntax"
+  for f in "$WEB"/js/*.js; do
+    node --input-type=module --check < "$f" || {
+      echo "syntax error in $f" >&2
+      exit 1
+    }
+  done
+else
+  echo "==> node not found; skipping JS syntax check" >&2
+fi
+
 echo "==> generating service worker"
 cd "$WEB"
 # Derived by globbing rather than listed by hand. A hand-maintained list goes

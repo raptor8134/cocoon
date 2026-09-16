@@ -97,7 +97,12 @@ export class Viewer {
     this.pathGroup = new THREE.Group();
     this.axesGroup = new THREE.Group();
     this.labelsGroup = new THREE.Group();
-    this.scene.add(this.mandrelGroup, this.pathGroup, this.axesGroup, this.labelsGroup);
+    // Candidate surfaces from a CAD import, shown for review before anything
+    // is committed. Kept in its own group so the normal scene is untouched and
+    // the preview can simply be cleared on cancel.
+    this.candidateGroup = new THREE.Group();
+    this.scene.add(this.mandrelGroup, this.pathGroup, this.axesGroup,
+      this.labelsGroup, this.candidateGroup);
 
     // Drawn direction of the spindle arrow; set from the config so the
     // picture matches what the machine will actually do.
@@ -351,9 +356,114 @@ export class Viewer {
     this.homePosition.copy(this.camera.position);
   }
 
+  /** Frame the imported candidates, which may not match the current mandrel. */
+  frameCandidates(candidates) {
+    let xmin = Infinity, xmax = -Infinity, rmax = 0;
+    for (const c of candidates) {
+      if (!c.segments || c.segments.length === 0) continue;
+      xmin = Math.min(xmin, c.axialMin);
+      xmax = Math.max(xmax, c.axialMax);
+      rmax = Math.max(rmax, c.radiusMax);
+    }
+    if (!isFinite(xmin) || xmax <= xmin) return;
+    this.frame({ xmin, xmax, zmax: rmax, length: xmax - xmin });
+  }
+
+  /** Which candidate is under the pointer, or null. */
+  pickCandidate(clientX, clientY) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1
+    );
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    const hits = ray.intersectObjects(this.candidateGroup.children, false);
+    return hits.length > 0 ? hits[0].object.userData.candidateId : null;
+  }
+
   goHome() {
     this.camera.position.copy(this.homePosition);
     this.controls.target.copy(this.homeTarget);
     this.controls.update();
   }
+}
+
+// --- CAD import preview ----------------------------------------------------
+
+const CAND_ON = 0x5b9cff;
+const CAND_OFF = 0x555d6a;
+const CAND_HOT = 0xffc857;
+
+/** Lathe a candidate's segments into a mesh, in the viewer's render frame. */
+function candidateMesh(segments, selected) {
+  const pts = [];
+  for (const seg of segments) {
+    // Straight segments need two points; anything curved is sampled coarsely,
+    // since this is a preview and not the geometry that gets wound.
+    const n = seg.kind === "line" ? 1 : 24;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      let x, r;
+      if (seg.kind === "line" || !seg.control) {
+        x = seg.start.x + t * (seg.end.x - seg.start.x);
+        r = seg.start.r + t * (seg.end.r - seg.start.r);
+      } else {
+        // Control-point hull is close enough to place a preview.
+        const k = Math.min(Math.floor(t * (seg.control.length - 1)), seg.control.length - 2);
+        const u = t * (seg.control.length - 1) - k;
+        x = seg.control[k].x + u * (seg.control[k + 1].x - seg.control[k].x);
+        r = seg.control[k].r + u * (seg.control[k + 1].r - seg.control[k].r);
+      }
+      pts.push(new THREE.Vector2(Math.max(r, 0.001), x));
+    }
+  }
+  if (pts.length < 2) return null;
+
+  const geom = new THREE.LatheGeometry(pts, 64);
+  const mat = new THREE.MeshStandardMaterial({
+    color: selected ? CAND_ON : CAND_OFF,
+    roughness: 0.6,
+    metalness: 0.1,
+    transparent: true,
+    opacity: selected ? 0.9 : 0.35,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.rotation.z = -Math.PI / 2; // lathe revolves about +Y; the mandrel axis is +X
+  return mesh;
+}
+
+/** Replace the candidate preview. The normal mandrel is hidden while it shows. */
+export function drawCandidatePreview(viewer, candidates, selectedIds) {
+  viewer.clearGroup(viewer.candidateGroup);
+  viewer.mandrelGroup.visible = false;
+  viewer.pathGroup.visible = false;
+
+  let any = null;
+  for (const c of candidates) {
+    if (!c.segments || c.segments.length === 0) continue;
+    const mesh = candidateMesh(c.segments, selectedIds.has(c.id));
+    if (!mesh) continue;
+    mesh.userData.candidateId = c.id;
+    viewer.candidateGroup.add(mesh);
+    any = c;
+  }
+  if (any) viewer.frameCandidates(candidates);
+}
+
+/** Tint one candidate, or clear the tint when id is null. */
+export function highlightCandidate(viewer, id) {
+  for (const mesh of viewer.candidateGroup.children) {
+    const on = mesh.material.opacity > 0.5;
+    mesh.material.color.setHex(
+      mesh.userData.candidateId === id ? CAND_HOT : on ? CAND_ON : CAND_OFF
+    );
+  }
+}
+
+export function clearCandidatePreview(viewer) {
+  viewer.clearGroup(viewer.candidateGroup);
+  viewer.mandrelGroup.visible = true;
+  viewer.pathGroup.visible = true;
 }

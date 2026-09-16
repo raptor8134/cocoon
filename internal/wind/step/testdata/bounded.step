@@ -1,0 +1,80 @@
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('bounded mandrel'),'2;1');
+FILE_NAME('nosecone.step','2026-09-14T10:22:31',('J Notley'),('Winder'),
+  'Open CASCADE','Onshape','');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 }'));
+ENDSEC;
+DATA;
+#1 = CARTESIAN_POINT('',(0.,0.,0.));
+#2 = DIRECTION('',(1.,0.,0.));
+#3 = DIRECTION('',(0.,0.,1.));
+#4 = AXIS2_PLACEMENT_3D('',#1,#2,#3);
+
+/* body: 50mm radius cylinder about +X, bounded 0..200 by its face */
+#10 = CYLINDRICAL_SURFACE('body',#4,50.);
+#11 = CARTESIAN_POINT('',(0.,50.,0.));
+#12 = CARTESIAN_POINT('',(200.,50.,0.));
+#13 = VERTEX_POINT('',#11);
+#14 = VERTEX_POINT('',#12);
+#15 = LINE('',#11,#16);
+#16 = VECTOR('',#2,200.);
+#17 = EDGE_CURVE('',#13,#14,#15,.T.);
+#18 = ORIENTED_EDGE('',*,*,#17,.T.);
+#19 = EDGE_LOOP('',(#18));
+#20 = FACE_OUTER_BOUND('',#19,.T.);
+#21 = ADVANCED_FACE('body_face',(#20),#10,.T.);
+
+/* nose: cone from 200..280, 50mm down to 15mm */
+/* narrowing nose: STEP requires a positive semi_angle, so a taper is encoded
+   with the placement at the SMALL end and the axis pointing back toward the
+   large end. r = 15 at x = 280, growing to 50 at x = 200. */
+#30 = CARTESIAN_POINT('',(280.,0.,0.));
+#29 = DIRECTION('',(-1.,0.,0.));
+#31 = AXIS2_PLACEMENT_3D('',#30,#29,#3);
+#32 = CONICAL_SURFACE('nose',#31,15.,0.41243);
+#33 = CARTESIAN_POINT('',(200.,50.,0.));
+#34 = CARTESIAN_POINT('',(280.,15.,0.));
+#35 = VERTEX_POINT('',#33);
+#36 = VERTEX_POINT('',#34);
+#37 = LINE('',#33,#38);
+#38 = VECTOR('',#2,80.);
+#39 = EDGE_CURVE('',#35,#36,#37,.T.);
+#40 = ORIENTED_EDGE('',*,*,#39,.T.);
+#41 = EDGE_LOOP('',(#40));
+#42 = FACE_OUTER_BOUND('',#41,.T.);
+#43 = ADVANCED_FACE('nose_face',(#42),#32,.T.);
+
+/* coaxial bore: 8mm, same axis -- must be reported as inside the body */
+#50 = CYLINDRICAL_SURFACE('bore',#4,8.);
+#51 = CARTESIAN_POINT('',(0.,8.,0.));
+#52 = CARTESIAN_POINT('',(280.,8.,0.));
+#53 = VERTEX_POINT('',#51);
+#54 = VERTEX_POINT('',#52);
+#55 = LINE('',#51,#56);
+#56 = VECTOR('',#2,280.);
+#57 = EDGE_CURVE('',#53,#54,#55,.T.);
+#58 = ORIENTED_EDGE('',*,*,#57,.T.);
+#59 = EDGE_LOOP('',(#58));
+#60 = FACE_OUTER_BOUND('',#59,.T.);
+#61 = ADVANCED_FACE('bore_face',(#60),#50,.T.);
+
+/* locating divot: radial axis -- must be rejected as not coaxial */
+#70 = CARTESIAN_POINT('',(60.,50.,0.));
+#71 = DIRECTION('',(0.,1.,0.));
+#72 = DIRECTION('',(1.,0.,0.));
+#73 = AXIS2_PLACEMENT_3D('',#70,#71,#72);
+#74 = CYLINDRICAL_SURFACE('divot',#73,3.);
+#75 = CARTESIAN_POINT('',(60.,50.,0.));
+#76 = VERTEX_POINT('',#75);
+#77 = EDGE_LOOP('',(#78));
+#78 = ORIENTED_EDGE('',*,*,#79,.T.);
+#79 = EDGE_CURVE('',#76,#76,#80,.T.);
+#80 = LINE('',#75,#81);
+#81 = VECTOR('',#71,3.);
+#82 = FACE_OUTER_BOUND('',#77,.T.);
+#83 = ADVANCED_FACE('divot_face',(#82),#74,.T.);
+
+#90 = ( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );
+ENDSEC;
+END-ISO-10303-21;

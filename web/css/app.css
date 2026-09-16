@@ -41,6 +41,13 @@
 
 * { box-sizing: border-box; }
 
+/* The [hidden] attribute is only a UA-stylesheet `display: none`, so ANY author
+   rule setting display silently defeats it. That has now bitten twice -- the
+   JSON pane and the import panel both stayed visible while marked hidden -- so
+   enforce it once here rather than remembering a per-element override each
+   time something gets `display: flex`. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -289,11 +296,7 @@ select { cursor: pointer; }
 
 /* --- json + gcode text --------------------------------------------------- */
 
-/* The [hidden] attribute only works if no author rule sets `display`, and the
-   flex below does exactly that -- which is why the JSON pane used to stay
-   visible underneath the block editor. Restore it explicitly. */
 #json-view { padding: 0; display: flex; }
-#json-view[hidden] { display: none; }
 #json-text {
   flex: 1;
   width: 100%;
@@ -426,4 +429,64 @@ select { cursor: pointer; }
 .axis-legend b {
   color: var(--fg-dim);
   font-family: var(--mono);
+}
+
+/* --- CAD import review ---------------------------------------------------- */
+
+.import-review {
+  position: absolute;
+  inset: 12px 12px auto auto;
+  width: min(380px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--bg-raised) 96%, transparent);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  backdrop-filter: blur(8px);
+  z-index: 5;
+}
+.import-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; padding: 11px 13px; border-bottom: 1px solid var(--border);
+}
+.import-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.import-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 13px; }
+.import-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 10px 13px; border-top: 1px solid var(--border);
+}
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: color-mix(in srgb, var(--accent) 85%, #fff); }
+.btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+
+.import-h {
+  margin: 16px 0 8px; font-size: 11px; font-weight: 600;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--fg-faint);
+}
+
+.prov { display: grid; gap: 3px; }
+.prov-row { display: flex; gap: 10px; font-size: 12px; }
+.prov-key { color: var(--fg-faint); min-width: 108px; }
+.prov-val { color: var(--fg-dim); word-break: break-word; }
+.mono { font-family: var(--mono); }
+
+.cand-list { display: flex; flex-direction: column; gap: 5px; }
+.cand {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--bg-sunken);
+  cursor: pointer;
+}
+.cand:hover { border-color: var(--border-strong); }
+.cand-on { border-color: var(--accent); }
+.cand-rejected { opacity: .62; }
+.cand-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cand-name { font-size: 13px; }
+.cand-dims { font: 11px/1.4 var(--mono); color: var(--fg-faint); }
+.cand-why { font-size: 11px; color: var(--err); }
+
+@media (max-width: 860px) {
+  .import-review { inset: 8px; width: auto; }
 }

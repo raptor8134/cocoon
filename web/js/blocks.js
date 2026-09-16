@@ -73,7 +73,7 @@ function titleCase(s) {
 
 // --- mandrel --------------------------------------------------------------
 
-export function renderMandrel(host, cfg, { onChange, onStructure }) {
+export function renderMandrel(host, cfg, { onChange, onStructure, onImport }) {
   host.replaceChildren();
   const m = cfg.mandrel;
 
@@ -93,7 +93,7 @@ export function renderMandrel(host, cfg, { onChange, onStructure }) {
       numberField("Length", m.dimensions, "length", { unit: "mm", min: 0, onChange, path: "mandrel.length" }),
       numberField("Diameter", m.dimensions, "diameter", { unit: "mm", min: 0, onChange, path: "mandrel.diameter" })
     );
-  } else {
+  } else if (m.type === "arbitrary_axial") {
     const known = BUILTIN_PROFILES.includes(m.profile);
     host.append(
       selectField(
@@ -122,7 +122,38 @@ export function renderMandrel(host, cfg, { onChange, onStructure }) {
       host.append(wrap);
     }
     host.append(el("span", "unit", "CSV profiles load from the app's profiles/ folder"));
+  } else if (m.type === "profile") {
+    // An imported profile is exact curves, not something to hand-edit here.
+    // Summarise it and show where it came from.
+    const p = m.profile || {};
+    const src = p.source || {};
+    const n = (p.segments || []).length;
+    host.append(el("span", "unit",
+      `${n} curve segment${n === 1 ? "" : "s"}` +
+      (src.filename ? ` from ${src.filename}` : "")));
+    if (src.originating_system || src.imported) {
+      const note = el("span", "unit",
+        [src.originating_system && `written by ${src.originating_system}`,
+         src.imported && `imported ${src.imported.slice(0, 10)}`]
+          .filter(Boolean).join(" · "));
+      note.style.flexBasis = "100%";
+      host.append(note);
+    }
+    if (src.sha256) {
+      const hv = el("span", "unit mono", `hash ${src.sha256.slice(0, 12)}…`);
+      hv.title = src.sha256 + "\n\nContent hash: used to verify a file is the same one, not meant to be read.";
+      hv.style.flexBasis = "100%";
+      host.append(hv);
+    }
   }
+
+  const imp = el("button", "btn", "Import from CAD…");
+  imp.type = "button";
+  imp.addEventListener("click", () => onImport?.());
+  const row = el("div", "field");
+  row.style.flexBasis = "100%";
+  row.append(imp, el("span", "unit", "STEP (.step / .stp)"));
+  host.append(row);
 }
 
 // --- filament -------------------------------------------------------------

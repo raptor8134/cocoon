@@ -9,7 +9,7 @@
 // handed to the core verbatim.
 
 export const LAYER_TYPES = ["hoop", "helical"];
-export const MANDREL_TYPES = ["cylindrical", "arbitrary_axial"];
+export const MANDREL_TYPES = ["cylindrical", "arbitrary_axial", "profile"];
 
 /** Profiles shipped with the app, offered in the mandrel dropdown. */
 export const BUILTIN_PROFILES = [
@@ -77,6 +77,11 @@ export function normalize(cfg) {
     const d = (m.dimensions = m.dimensions && typeof m.dimensions === "object" ? m.dimensions : {});
     if (typeof d.length !== "number") d.length = 100;
     if (typeof d.diameter !== "number") d.diameter = 50;
+  } else if (m.type === "profile") {
+    // An imported curve profile; leave it alone. Only guard the shape so the
+    // block editor can render a summary without checking every field.
+    if (!m.profile || typeof m.profile !== "object") m.profile = { segments: [] };
+    if (!Array.isArray(m.profile.segments)) m.profile.segments = [];
   } else if (typeof m.profile !== "string" && !Array.isArray(m.profile)) {
     m.profile = BUILTIN_PROFILES[0];
   }
@@ -144,6 +149,11 @@ export function quickCheck(cfg) {
 
   if (!num(cfg.filament.width) || cfg.filament.width <= 0) {
     issues.push({ path: "filament.width", message: "Filament width must be greater than 0." });
+  }
+  if (cfg.mandrel.type === "profile") {
+    if (!cfg.mandrel.profile?.segments?.length) {
+      issues.push({ path: "mandrel.profile", message: "Imported profile has no curve segments." });
+    }
   }
   if (cfg.mandrel.type === "cylindrical") {
     const d = cfg.mandrel.dimensions;
