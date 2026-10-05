@@ -15,7 +15,14 @@ WEB="$ROOT/web"
 
 echo "==> building wasm core"
 cd "$ROOT"
-GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o "$WEB/cocoon.wasm" ./cmd/wasm
+# -trimpath and -buildvcs=false keep the output byte-identical across builds of
+# identical sources. Without them Go stamps the build directory and the git
+# commit into the binary, so every CI deploy would produce a different
+# cocoon.wasm, hence a different cache name below, hence every visitor
+# re-downloading 1.4 MB after a README-only push. Nothing reads the build
+# info at runtime -- the program's provenance header is built from the wind
+# config, not from debug.ReadBuildInfo.
+GOOS=js GOARCH=wasm go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$WEB/cocoon.wasm" ./cmd/wasm
 
 echo "==> copying Go wasm runtime shim"
 GOROOT=$(go env GOROOT)

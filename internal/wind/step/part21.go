@@ -57,15 +57,45 @@ const (
 	Typed // NAME(value) appearing as a parameter
 )
 
+// Part is one typed record inside an entity instance.
+type Part struct {
+	Type   string
+	Params []Value
+}
+
 // Entity is one instance from the DATA section.
 //
-// A complex instance (several types sharing one id) keeps every type in Types,
-// with Params holding each type's parameters in the same order.
+// A complex instance (several types sharing one id) keeps every type in Types
+// and every record in Parts. Params is the concatenation of all of them, which
+// is convenient for simple entities and useless for complex ones -- a complex
+// instance's parameters are only meaningful per type, so read those through
+// ParamsOf.
+//
+// Complex instances are not an edge case here: exporters routinely emit
+// geometry as a RATIONAL_B_SPLINE_SURFACE assembled from six supertypes, so
+// reaching the control net means addressing one record of several.
 type Entity struct {
 	ID     int
 	Type   string   // first type name; the common case
 	Types  []string // all type names, for complex instances
-	Params []Value
+	Parts  []Part   // per-type records
+	Params []Value  // all parameters concatenated
+}
+
+// ParamsOf returns the parameters of one type within the instance.
+func (e Entity) ParamsOf(typeName string) ([]Value, bool) {
+	for _, p := range e.Parts {
+		if p.Type == typeName {
+			return p.Params, true
+		}
+	}
+	return nil, false
+}
+
+// Has reports whether the instance includes the given type.
+func (e Entity) Has(typeName string) bool {
+	_, ok := e.ParamsOf(typeName)
+	return ok
 }
 
 // File is a parsed Part 21 document.
@@ -238,7 +268,12 @@ func (p *parser) parseHeaderEntity() (Entity, error) {
 	if p.i < len(p.s) && p.s[p.i] == ';' {
 		p.i++
 	}
-	return Entity{Type: name, Types: []string{name}, Params: params}, nil
+	return Entity{
+		Type:   name,
+		Types:  []string{name},
+		Parts:  []Part{{Type: name, Params: params}},
+		Params: params,
+	}, nil
 }
 
 // parseInstance reads "#id = ..." through its terminating semicolon.
@@ -279,6 +314,7 @@ func (p *parser) parseInstance() (Entity, error) {
 				return Entity{}, err
 			}
 			e.Types = append(e.Types, name)
+			e.Parts = append(e.Parts, Part{Type: name, Params: params})
 			e.Params = append(e.Params, params...)
 		}
 	} else {
@@ -291,6 +327,7 @@ func (p *parser) parseInstance() (Entity, error) {
 			return Entity{}, err
 		}
 		e.Types = []string{name}
+		e.Parts = []Part{{Type: name, Params: params}}
 		e.Params = params
 	}
 

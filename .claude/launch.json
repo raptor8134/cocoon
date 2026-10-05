@@ -3,9 +3,12 @@
   "configurations": [
     {
       "name": "cocoon-web",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8080", "--directory", "web"],
-      "port": 8080
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "exec python3 -m http.server \"${PORT:-8080}\" --directory web"
+      ],
+      "autoPort": true
     }
   ]
 }

@@ -63,6 +63,23 @@ type Candidate struct {
 	// Coaxial is true when this surface shares the dominant axis.
 	Coaxial bool
 
+	// fromBSpline marks a surface recovered from a NURBS control net rather
+	// than from an analytic entity. Its profile is already known at detection
+	// time, in model units, so it skips segmentsFor.
+	fromBSpline bool
+
+	// faces counts how many STEP faces this candidate covers after merging
+	// duplicate halves; mergedIDs records the ones folded in, so the review
+	// panel can still name them.
+	faces     int
+	mergedIDs []int
+
+	// rawProfile is the detected profile before unit scaling.
+	rawProfile []Point
+	rawWeights []float64
+	rawDegree  int
+	rawKnots   []float64
+
 	// Rejected explains why a surface is not a mandrel candidate. Empty when
 	// it is one. Surfaces are reported rather than silently dropped: a user
 	// seeing "bore: coaxial but inside the outer surface" learns that the
@@ -236,6 +253,12 @@ func ReadModel(f *File) (*Model, error) {
 		}
 	}
 
+	// Surfaces exported as NURBS. Many CAD packages write every face this way,
+	// so a file can contain no analytic surface entities at all and still be a
+	// plainly axisymmetric part. See bspline.go.
+	bsplines := f.bsplineCandidates()
+	cands = append(cands, bsplines...)
+
 	if len(cands) == 0 {
 		return nil, fmt.Errorf("no axisymmetric surfaces found: this file may not contain a revolved solid")
 	}
@@ -290,6 +313,13 @@ func ReadModel(f *File) (*Model, error) {
 		}
 		c.AxialMin, c.AxialMax = lo*scale, hi*scale
 
+		if c.fromBSpline {
+			// Already carries its profile from the control net; just scale it
+			// into millimetres and record the radius range.
+			c.scaleSegments(scale, best)
+			continue
+		}
+
 		segs, rmin, rmax, err := f.segmentsFor(*c, best, scale)
 		if err != nil {
 			c.Rejected = err.Error()
@@ -307,6 +337,21 @@ func ReadModel(f *File) (*Model, error) {
 	// covers the first half and the nose the second. Testing pairwise misses
 	// exactly the case the filter exists for.
 	markInternalFeatures(cands)
+
+	// A full revolve is often exported as two 180-degree halves, which produce
+	// identical profiles. Selecting both would lay the same curve down twice
+	// and double the mandrel outline, so fold duplicates into one entry that
+	// records how many faces it covers.
+	cands = mergeDuplicateProfiles(cands)
+
+	// Put the part's own start at zero.
+	//
+	// The axis origin comes from whichever placement the file happened to
+	// offer -- usually a circle at a section boundary -- so the raw axial
+	// coordinates are arbitrary. Without this an import is at the mercy of
+	// which circle appeared first in the file; the same part can come in at 0
+	// or at -304 depending on nothing meaningful.
+	normalizeAxialOrigin(cands)
 
 	sort.SliceStable(cands, func(i, j int) bool {
 		if cands[i].Rejected == "" != (cands[j].Rejected == "") {
@@ -337,7 +382,7 @@ func axisLabel(d Vec3) string {
 	return "custom"
 }
 
-// facePoints walks the topology to collect, for each surface, the vertex
+// facePoints walks the topology to collect, for each surface, the VERTEX
 // points of every face that uses it.
 //
 // STEP surfaces are unbounded -- a CYLINDRICAL_SURFACE describes an infinite
@@ -345,13 +390,19 @@ func axisLabel(d Vec3) string {
 // traversal is what makes "where does the cylinder stop and the nose start"
 // answerable.
 //
+// Only vertices count. Descending into the edge CURVES as well would sweep up
+// B-spline control points, and those overshoot the geometry they describe: on
+// a real ogive export the control hull reached 21 mm past the tip and 20 mm
+// past the base, inflating a 12.7..304.8 mm surface to -21..325.
+//
 // Raw points are returned rather than a projected range because the mandrel
 // axis is not known until every surface has been seen; projecting here would
 // mean assuming an axis before choosing one.
 func (f *File) facePoints() map[int][]Vec3 {
 	out := map[int][]Vec3{}
+
 	for _, face := range f.OfType("ADVANCED_FACE") {
-		if len(face.Params) < 3 {
+		if len(face.Params) < 3 || face.Params[2].Kind != Ref {
 			continue
 		}
 		surf := face.Params[2].Ref
@@ -359,8 +410,8 @@ func (f *File) facePoints() map[int][]Vec3 {
 		seen := map[int]bool{}
 		var walk func(id, depth int)
 		walk = func(id, depth int) {
-			// Bounded because STEP references can form cycles (an edge is
-			// shared by two faces, each reachable from the other).
+			// Bounded because STEP references form cycles: an edge is shared
+			// by two faces, each reachable from the other.
 			if depth > 12 || seen[id] {
 				return
 			}
@@ -369,12 +420,32 @@ func (f *File) facePoints() map[int][]Vec3 {
 			if !ok {
 				return
 			}
-			if e.Type == "CARTESIAN_POINT" {
-				if v, ok := f.vec(id); ok {
-					out[surf] = append(out[surf], v)
+
+			switch e.Type {
+			case "VERTEX_POINT":
+				if len(e.Params) > 1 && e.Params[1].Kind == Ref {
+					if v, ok := f.vec(e.Params[1].Ref); ok {
+						out[surf] = append(out[surf], v)
+					}
 				}
 				return
+
+			case "EDGE_CURVE":
+				// Params are (name, start_vertex, end_vertex, curve, sense).
+				// Follow only the vertices; the curve's control points are not
+				// on the surface boundary.
+				for _, i := range []int{1, 2} {
+					if i < len(e.Params) && e.Params[i].Kind == Ref {
+						walk(e.Params[i].Ref, depth+1)
+					}
+				}
+				return
+
+			case "CARTESIAN_POINT":
+				// Reached other than through a vertex; not a boundary point.
+				return
 			}
+
 			for _, p := range e.Params {
 				switch p.Kind {
 				case Ref:
@@ -388,6 +459,7 @@ func (f *File) facePoints() map[int][]Vec3 {
 				}
 			}
 		}
+
 		for _, p := range face.Params {
 			if p.Kind == List {
 				for _, q := range p.List {
@@ -672,6 +744,250 @@ func markInternalFeatures(cands []Candidate) {
 		// envelope anywhere is part of the winding surface, not a feature.
 		if covered > samples/2 && inside == covered {
 			cands[i].Rejected = "inside the outer envelope: an internal feature such as a bore"
+		}
+	}
+}
+
+// scaleSegments converts a detected NURBS profile into millimetre segments.
+//
+// It only scales. fitRevolution already measured the profile relative to the
+// axis origin, so subtracting it again here would double the offset -- which
+// it did, putting segments at twice the part's distance from the origin while
+// the extents stayed correct.
+func (c *Candidate) scaleSegments(scale float64, axis Axis) {
+	pts := make([]Point, len(c.rawProfile))
+	rmin, rmax := math.Inf(1), math.Inf(-1)
+	axMin, axMax := math.Inf(1), math.Inf(-1)
+	for i, p := range c.rawProfile {
+		pts[i] = Point{X: p.X * scale, R: p.R * scale}
+		rmin, rmax = math.Min(rmin, pts[i].R), math.Max(rmax, pts[i].R)
+		axMin, axMax = math.Min(axMin, pts[i].X), math.Max(axMax, pts[i].X)
+	}
+	c.RadiusMin, c.RadiusMax = rmin, rmax
+
+	// Face topology gives the authoritative extent; fall back to the control
+	// hull when a face carried none.
+	if c.AxialMax <= c.AxialMin {
+		c.AxialMin, c.AxialMax = axMin, axMax
+	}
+
+	seg := Seg{
+		Kind:    "spline",
+		Degree:  c.rawDegree,
+		Control: pts,
+		Weights: c.rawWeights,
+		Knots:   c.rawKnots,
+		Start:   pts[0],
+		End:     pts[len(pts)-1],
+	}
+	// A degree-1 profile is a straight line; emitting it as one keeps a
+	// cylinder or cone exactly straight rather than relying on spline
+	// evaluation to reproduce it.
+	if c.rawDegree <= 1 && len(pts) == 2 {
+		seg = Seg{Kind: "line", Start: pts[0], End: pts[1]}
+	}
+	c.Segments = []Seg{seg}
+}
+
+// bsplineCandidates finds every NURBS surface that is a surface of revolution.
+func (f *File) bsplineCandidates() []Candidate {
+	axes := f.candidateAxes()
+	var out []Candidate
+
+	// Faces tell us which surfaces are actually used by the solid, and give a
+	// surface its name. A surface entity nothing references is not part of the
+	// shape.
+	usedBy := map[int]string{}
+	for _, face := range f.OfType("ADVANCED_FACE") {
+		if len(face.Params) >= 3 && face.Params[2].Kind == Ref {
+			name := ""
+			if face.Params[0].Kind == Str {
+				name = face.Params[0].Str
+			}
+			usedBy[face.Params[2].Ref] = name
+		}
+	}
+
+	for id, name := range usedBy {
+		e, ok := f.Get(id)
+		if !ok {
+			continue
+		}
+		if !e.Has("B_SPLINE_SURFACE") && !e.Has("B_SPLINE_SURFACE_WITH_KNOTS") {
+			continue // an analytic surface, handled elsewhere
+		}
+		surf, ok := f.readBSplineSurface(e)
+		if !ok {
+			continue
+		}
+
+		// Tolerance scaled to the surface's own size: an absolute epsilon is
+		// either too tight for a metre-scale part or too loose for a
+		// millimetre-scale one.
+		extent := surf.extent()
+		tol := math.Max(extent*1e-6, 1e-12)
+
+		matched := false
+		for _, ax := range axes {
+			fit, ok := surf.fitRevolution(ax, tol)
+			if !ok {
+				continue
+			}
+			label := name
+			if label == "" {
+				label = describeForm(surf.Form)
+			}
+			out = append(out, Candidate{
+				ID:          id,
+				Type:        "B_SPLINE_SURFACE",
+				Name:        label,
+				Axis:        ax,
+				fromBSpline: true,
+				rawProfile:  fit.Profile,
+				rawWeights:  fit.Weights,
+				rawDegree:   fit.Degree,
+				rawKnots:    fit.Knots,
+			})
+			matched = true
+			break
+		}
+		if !matched {
+			label := name
+			if label == "" {
+				label = describeForm(surf.Form)
+			}
+			out = append(out, Candidate{
+				ID:       id,
+				Type:     "B_SPLINE_SURFACE",
+				Name:     label,
+				Rejected: "not a surface of revolution about any candidate axis",
+			})
+		}
+	}
+	return out
+}
+
+// extent is the diagonal of the control net's bounding box.
+func (s *bsplineSurface) extent() float64 {
+	lo := Vec3{math.Inf(1), math.Inf(1), math.Inf(1)}
+	hi := Vec3{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
+	for _, row := range s.Net {
+		for _, p := range row {
+			lo = Vec3{math.Min(lo.X, p.X), math.Min(lo.Y, p.Y), math.Min(lo.Z, p.Z)}
+			hi = Vec3{math.Max(hi.X, p.X), math.Max(hi.Y, p.Y), math.Max(hi.Z, p.Z)}
+		}
+	}
+	return hi.sub(lo).len()
+}
+
+// describeForm turns the surface_form hint into a label. The hint is shown as
+// a description only -- it is not used to decide anything, because exporters
+// write it loosely (a tangent ogive arrives tagged .TOROIDAL_SURF.).
+func describeForm(form string) string {
+	switch form {
+	case "CYLINDRICAL_SURF":
+		return "cylindrical face"
+	case "CONICAL_SURF":
+		return "conical face"
+	case "TOROIDAL_SURF":
+		return "curved face"
+	case "SPHERICAL_SURF":
+		return "spherical face"
+	case "PLANE_SURF":
+		return "planar face"
+	}
+	return "spline face"
+}
+
+// MergedIDs lists the duplicate faces folded into this candidate.
+func (c Candidate) MergedIDs() []int { return c.mergedIDs }
+
+// Faces is how many faces this candidate represents. A full revolve exported
+// as halves yields one candidate covering several faces.
+func (c Candidate) FaceCount() int {
+	if c.faces < 1 {
+		return 1
+	}
+	return c.faces
+}
+
+// sameProfile reports whether two candidates describe the same outline.
+func sameProfile(a, b Candidate, tol float64) bool {
+	if len(a.Segments) != len(b.Segments) {
+		return false
+	}
+	near := func(x, y float64) bool { return math.Abs(x-y) <= tol }
+	if !near(a.AxialMin, b.AxialMin) || !near(a.AxialMax, b.AxialMax) ||
+		!near(a.RadiusMin, b.RadiusMin) || !near(a.RadiusMax, b.RadiusMax) {
+		return false
+	}
+	for i := range a.Segments {
+		x, y := a.Segments[i], b.Segments[i]
+		if x.Kind != y.Kind || len(x.Control) != len(y.Control) {
+			return false
+		}
+		if !near(x.Start.X, y.Start.X) || !near(x.Start.R, y.Start.R) ||
+			!near(x.End.X, y.End.X) || !near(x.End.R, y.End.R) {
+			return false
+		}
+		for k := range x.Control {
+			if !near(x.Control[k].X, y.Control[k].X) || !near(x.Control[k].R, y.Control[k].R) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func mergeDuplicateProfiles(cands []Candidate) []Candidate {
+	const tol = 1e-6
+	var out []Candidate
+	for _, c := range cands {
+		merged := false
+		if c.Rejected == "" && len(c.Segments) > 0 {
+			for i := range out {
+				if out[i].Rejected == "" && sameProfile(out[i], c, tol) {
+					out[i].faces = out[i].FaceCount() + 1
+					out[i].mergedIDs = append(out[i].mergedIDs, c.ID)
+					merged = true
+					break
+				}
+			}
+		}
+		if !merged {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// normalizeAxialOrigin shifts every candidate so the accepted geometry starts
+// at axial zero, which is also where a carriage naturally starts.
+func normalizeAxialOrigin(cands []Candidate) {
+	shift := math.Inf(1)
+	for _, c := range cands {
+		if c.Rejected == "" && len(c.Segments) > 0 && c.AxialMin < shift {
+			shift = c.AxialMin
+		}
+	}
+	if math.IsInf(shift, 1) || shift == 0 {
+		return
+	}
+	for i := range cands {
+		c := &cands[i]
+		c.AxialMin -= shift
+		c.AxialMax -= shift
+		for j := range c.Segments {
+			s := &c.Segments[j]
+			s.Start.X -= shift
+			s.End.X -= shift
+			s.Center.X -= shift
+			for k := range s.Control {
+				s.Control[k].X -= shift
+			}
+			for k := range s.Points {
+				s.Points[k].X -= shift
+			}
 		}
 	}
 }

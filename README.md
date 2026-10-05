@@ -19,7 +19,7 @@ docs/              requirements and design notes
 ```
 
 The GUI runs in the browser and talks to the Go core compiled to WebAssembly.
-The wasm core is ~4.6 MB (1.3 MB gzipped).
+The wasm core is ~5.2 MB (1.4 MB gzipped).
 
 ## Build
 
@@ -35,6 +35,14 @@ python3 -m http.server 8080 --directory web
 ```
 
 The app is an installable PWA and works offline after first load.
+
+## Deploy
+
+Pushing to `master` builds the web app and publishes it to GitHub Pages via
+`.github/workflows/pages.yml`. The build outputs (`cocoon.wasm`,
+`wasm_exec.js`, `sw.js`) are built on the runner rather than committed, so the
+repository stays source-only; this requires Pages to be set to **Source:
+GitHub Actions** in the repository settings.
 
 ## Using it
 

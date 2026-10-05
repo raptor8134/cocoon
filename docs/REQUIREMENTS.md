@@ -690,6 +690,11 @@ Live guesses baked into current output.
 - **2026-09-08 — Blocks and JSON edit one shared model.**
 - **2026-09-08 — Service worker generated at build time** with a content hash,
   so an unchanged build produces no update and no re-downloads.
+- **2026-09-22 — The wasm is built with `-trimpath -buildvcs=false`**, which
+  is what makes the line above true in CI. Go otherwise stamps the build
+  directory and the git commit into the binary, so every deploy would change
+  the content hash and re-download 1.4 MB on every client, even for a
+  docs-only push.
 
 ---
 
@@ -865,6 +870,33 @@ Ranked by value per unit of effort:
    auth. Fusion has an add-in API that could do the same locally.
 
 6. **SVG — deprioritised.** Superseded by DXF for this purpose.
+
+### 10.0 Exporters often write NO analytic surfaces at all
+
+The entity model below assumes a file states its geometry analytically. A real
+Onshape export (via ST-Developer, AP242) does not: it contains **zero**
+`CYLINDRICAL_SURFACE`, `CONICAL_SURFACE` or `SURFACE_OF_REVOLUTION` entities.
+Every face is a `RATIONAL_B_SPLINE_SURFACE`.
+
+The `surface_form` enum looks like it rescues this — the file carries
+`.CYLINDRICAL_SURF.` and `.TOROIDAL_SURF.` hints — but it is only a hint and it
+is wrong where it matters: a tangent ogive exports tagged `.TOROIDAL_SURF.`,
+which is neither true nor useful. **The hint can be shown as a description; it
+must not be used to decide anything.**
+
+So the importer recognises surfaces of revolution from the control net instead.
+Revolving a profile sweeps every control point in a circle about the axis, so
+one parameter direction of the grid is the sweep and the other follows the
+profile; along the sweep direction every control point keeps the same axial
+coordinate. Testing that in both directions identifies the surface and says
+which index is which. The profile then comes from the control points at the
+start of each sweep, which lie exactly on the surface because a B-spline
+interpolates its end control points.
+
+Validated against a real 4" 3:1 tangent ogive mandrel: the recovered curve
+agrees with an independent rational-Bezier evaluation to **0.0006 mm**, and the
+first two control points share a radius, which is the tangency condition that
+makes it a *tangent* ogive rather than merely a curve.
 
 ### 10.1 STEP import — entity model
 
@@ -1194,16 +1226,24 @@ useful quality signal about the import.
 
 ### Deployment
 
-The app is a static site and deploys to **GitHub Pages** as-is. Verified: all
-asset references are relative, so a project-page subpath (`/cocoon/`) resolves
+The app is a static site and deploys to **GitHub Pages** from
+`.github/workflows/pages.yml` on every push to `master`. Verified: all asset
+references are relative, so a project-page subpath (`/cocoon/`) resolves
 correctly, and the service worker's precache list uses `./` paths that resolve
 against its own scope.
 
-The one blocker is that the build outputs (`cocoon.wasm`, `wasm_exec.js`,
-`sw.js`) are gitignored, so a repo-sourced Pages deploy would publish an
-incomplete site. `.github/workflows/pages.yml` builds them in CI instead, which
-keeps the repository source-only — committing a ~5 MB wasm per build is what
-grew `.git` to 163 MB before its history was purged.
+The build outputs (`cocoon.wasm`, `wasm_exec.js`, `sw.js`) stay gitignored: the
+workflow runs `scripts/build-web.sh` on the runner and uploads `web/` from
+there, so the repository stays source-only — committing a ~5 MB wasm per build
+is what grew `.git` to 163 MB before its history was purged. This is also why
+Pages must be configured with **Source: GitHub Actions**; a branch-sourced
+deploy would publish the repository's `web/` without the generated files and
+serve an incomplete site.
+
+Before uploading, the workflow re-runs the checks that matter for a published
+build: `go vet` for both the native and `js/wasm` targets, `gofmt`, and a check
+that every path in the generated precache list actually exists — a missing
+entry would install a broken cache and then serve it from cache.
 
 ---
 

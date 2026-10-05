@@ -98,13 +98,14 @@ func segmentsJSON(segs []step.Seg) string {
 	out := make([]wind.Segment, 0, len(segs))
 	for _, s := range segs {
 		w := wind.Segment{
-			Kind:   wind.SegmentKind(s.Kind),
-			Start:  wind.Pt{X: s.Start.X, R: s.Start.R},
-			End:    wind.Pt{X: s.End.X, R: s.End.R},
-			Center: wind.Pt{X: s.Center.X, R: s.Center.R},
-			Radius: s.Radius,
-			Degree: s.Degree,
-			Knots:  s.Knots,
+			Kind:    wind.SegmentKind(s.Kind),
+			Start:   wind.Pt{X: s.Start.X, R: s.Start.R},
+			End:     wind.Pt{X: s.End.X, R: s.End.R},
+			Center:  wind.Pt{X: s.Center.X, R: s.Center.R},
+			Radius:  s.Radius,
+			Degree:  s.Degree,
+			Knots:   s.Knots,
+			Weights: s.Weights,
 		}
 		for _, c := range s.Control {
 			w.Control = append(w.Control, wind.Pt{X: c.X, R: c.R})
